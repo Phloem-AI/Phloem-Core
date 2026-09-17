@@ -1,2 +1,3 @@
-# Phloem-Sandbox
-Lightweight VM for Coding Agents
+# Phloem
+
+AI E2E testing for your software. Deterministic testing included.
