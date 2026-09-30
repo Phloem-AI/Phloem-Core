@@ -47,6 +47,7 @@ function createPromptDependencies(): PromptDependencies {
       password({
         message: 'Enter your Google AI Studio / Gemini API key for Gemma',
         mask: '*',
+        toggleMask: false,
         validate: (value) => (value.trim().length > 0 ? true : 'The API key cannot be empty.'),
       }),
     askForUrl: () =>
@@ -95,4 +96,14 @@ export async function collectRunInputs(
     brief: brief.trim(),
     navigationPolicy: createNavigationPolicy(websiteUrl, brief),
   }
+}
+
+export async function updateGemmaApiKey(
+  dependencies: Pick<PromptDependencies, 'askForKey' | 'saveKey'> = createPromptDependencies(),
+  terminalCheck: () => void = requireInteractiveTerminal,
+): Promise<void> {
+  terminalCheck()
+  const apiKey = await dependencies.askForKey()
+  if (apiKey.trim().length === 0) throw new Error('The Gemma API key cannot be empty.')
+  dependencies.saveKey(apiKey)
 }
