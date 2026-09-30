@@ -110,6 +110,8 @@ function makeRequestText(context: RequestContext, schema: ZodType<unknown>): str
   }
   const schemaJson = z.toJSONSchema(schema, { target: 'draft-7' })
   return JSON.stringify({
+    systemInstruction:
+      'You are Gemma powering Phloem, a bounded web UI smoke-testing CLI. Return data only in the requested schema. Never propose code execution, shell commands, or operations outside the schema.',
     task: context.task,
     instructions: context.instructions,
     data: context.data,

@@ -64,3 +64,24 @@ test('provider retry-after delay takes precedence over the client minimum spacin
 
   assert.ok(requestStarts[1]! - requestStarts[0]! >= 18_000)
 })
+
+test('provider retry-after delay cannot hold a run open beyond its maximum duration', async () => {
+  let now = 1_000
+  let sleepCalls = 0
+  const budget = new RunBudget({
+    now: () => now,
+    sleep: async (milliseconds) => {
+      sleepCalls += 1
+      now += milliseconds
+    },
+  })
+
+  await assert.rejects(
+    budget.runGemmaRequest(async () => {
+      throw Object.assign(new Error('rate limited'), { retryAfterMs: RUN_LIMITS.maxRunDurationMs })
+    }),
+  )
+  const sleepsAfterFirstRequest = sleepCalls
+  await assert.rejects(budget.runGemmaRequest(async () => 'should not run'), /retry wait would exceed/)
+  assert.equal(sleepCalls, sleepsAfterFirstRequest)
+})

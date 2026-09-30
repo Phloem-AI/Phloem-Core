@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { collectRunInputs, requireInteractiveTerminal, validateBrief, type PromptDependencies } from '../src/cli/prompts.js'
+import {
+  collectRunInputs,
+  requireInteractiveTerminal,
+  updateGemmaApiKey,
+  validateBrief,
+  type PromptDependencies,
+} from '../src/cli/prompts.js'
 
 test('terminal setup refuses non-interactive input', () => {
   assert.throws(() => requireInteractiveTerminal({ isTTY: false }, { isTTY: true }), /interactive terminal/)
@@ -52,4 +58,21 @@ test('setup reuses a saved key without prompting or saving again', async () => {
   const result = await collectRunInputs(dependencies, () => undefined)
   assert.equal(result.apiKey, 'already-stored-key')
   assert.equal(keyPrompts, 0)
+})
+
+test('explicit key update replaces the stored key without asking for URL or brief', async () => {
+  const savedKeys: string[] = []
+  let terminalChecked = false
+  await updateGemmaApiKey(
+    {
+      askForKey: async () => 'replacement-key',
+      saveKey: (apiKey) => savedKeys.push(apiKey),
+    },
+    () => {
+      terminalChecked = true
+    },
+  )
+
+  assert.equal(terminalChecked, true)
+  assert.deepEqual(savedKeys, ['replacement-key'])
 })
