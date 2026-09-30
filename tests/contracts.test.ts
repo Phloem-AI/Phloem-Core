@@ -46,5 +46,4 @@ test('flow completion and verdict responses are strict and versioned', () => {
     ObjectiveVerdictSchema.safeParse({ schemaVersion: '1', status: 'blocked', reason: 'Auth', evidence: [] }).success,
     false,
   )
-  assert.ok(assert)
 })

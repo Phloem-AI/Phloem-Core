@@ -2,9 +2,9 @@
   "name": "phloem",
   "version": "0.1.0",
   "description": "Local-first Gemma-guided web UI exploration and smoke testing",
-  "main": "dist/index.js",
+  "main": "dist/src/index.js",
   "bin": {
-    "phloem": "dist/index.js"
+    "phloem": "dist/src/index.js"
   },
   "engines": {
     "node": ">=20"
