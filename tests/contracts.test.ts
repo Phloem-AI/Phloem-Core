@@ -17,6 +17,7 @@ test('objective plans accept valid objectives and reject more than 15', () => {
   }
   assert.equal(ObjectivePlanSchema.parse({ schemaVersion: '1', objectives: [objective] }).objectives.length, 1)
   assert.equal(ObjectivePlanSchema.safeParse({ schemaVersion: '1', objectives: Array(16).fill(objective) }).success, false)
+  assert.equal(ObjectivePlanSchema.safeParse({ schemaVersion: '1', objectives: [objective, objective] }).success, false)
 })
 
 test('browser operation schemas reject unknown operations and arbitrary extra fields', () => {

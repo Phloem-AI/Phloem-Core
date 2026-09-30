@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { GemmaApiError, GemmaClient, GemmaResponseError } from '../src/gemma/client.js'
-import { RunBudget, ThreeConsecutiveGemmaFailuresError } from '../src/policy/run-budget.js'
+import { GemmaApiError, GemmaClient, GemmaInputError, GemmaResponseError } from '../src/gemma/client.js'
+import { RunBudget, RunCancelledError, ThreeConsecutiveGemmaFailuresError } from '../src/policy/run-budget.js'
 
 const validPlan = {
   schemaVersion: '1',
@@ -88,4 +88,27 @@ test('Gemma HTTP errors expose status and retry guidance without echoing respons
     assert.equal(error.message.includes('sensitive provider body'), false)
     return true
   })
+})
+
+test('Gemma client rejects oversized context before sending a request', async () => {
+  let requestCount = 0
+  const client = new GemmaClient({
+    apiKey: 'test-api-key',
+    budget: fakeBudget(),
+    fetchImpl: async () => {
+      requestCount += 1
+      return modelResponse(JSON.stringify(validPlan))
+    },
+  })
+
+  await assert.rejects(client.deriveObjectives('Brief', 'x'.repeat(30_001)), GemmaInputError)
+  assert.equal(requestCount, 0)
+})
+
+test('cancellation does not count as a failed Gemma request', async () => {
+  const controller = new AbortController()
+  controller.abort()
+  const budget = fakeBudget()
+  await assert.rejects(budget.runGemmaRequest(async () => 'unused', controller.signal), RunCancelledError)
+  assert.equal(await budget.runGemmaRequest(async () => 'usable response'), 'usable response')
 })

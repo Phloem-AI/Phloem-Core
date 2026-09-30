@@ -99,6 +99,15 @@ export const ObjectivePlanSchema = z
     schemaVersion: z.literal('1'),
     objectives: z.array(ObjectiveSchema).min(1).max(15),
   })
+  .superRefine((plan, context) => {
+    const ids = new Set<string>()
+    for (const [index, objective] of plan.objectives.entries()) {
+      if (ids.has(objective.id)) {
+        context.addIssue({ code: 'custom', path: ['objectives', index, 'id'], message: 'Objective IDs must be unique.' })
+      }
+      ids.add(objective.id)
+    }
+  })
   .strict()
 
 export const FlowStepResponseSchema = z.discriminatedUnion('kind', [

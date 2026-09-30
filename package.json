@@ -2,9 +2,9 @@
   "name": "phloem",
   "version": "0.1.0",
   "description": "Local-first Gemma-guided web UI exploration and smoke testing",
-  "main": "dist/src/index.js",
+  "main": "dist/index.js",
   "bin": {
-    "phloem": "dist/src/index.js"
+    "phloem": "dist/index.js"
   },
   "engines": {
     "node": ">=20"
@@ -12,7 +12,7 @@
   "type": "module",
   "scripts": {
     "start": "tsx src/index.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "tsx --test \"tests/**/*.test.ts\""
   },

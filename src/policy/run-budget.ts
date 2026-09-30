@@ -131,6 +131,7 @@ export class RunBudget {
       result = await request()
       this.consecutiveFailures = 0
     } catch (error) {
+      if (error instanceof RunCancelledError) throw error
       this.consecutiveFailures += 1
       if (this.consecutiveFailures >= RUN_LIMITS.maxConsecutiveGemmaFailures) {
         throw new ThreeConsecutiveGemmaFailuresError({ cause: error })
