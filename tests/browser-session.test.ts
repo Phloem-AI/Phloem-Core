@@ -57,13 +57,14 @@ test('Chromium blocks navigation to an origin not named in the brief', async (co
   let externalRequests = 0
   const externalServer = createServer((_request, response) => {
     externalRequests += 1
-    response.end('should not be reached')
+    response.writeHead(200, { 'content-type': 'text/html' })
+    response.end('<!doctype html><html><body><h1>Named external destination</h1></body></html>')
   })
   const externalUrl = await listen(externalServer)
   context.after(() => close(externalServer))
 
   const siteServer = createServer((request, response) => {
-    if (request.url === '/redirect') {
+    if (request.url === '/redirect' || request.url === '/allowed-redirect') {
       response.writeHead(302, { location: `${externalUrl}/outside` })
       response.end()
       return
@@ -86,5 +87,20 @@ test('Chromium blocks navigation to an origin not named in the brief', async (co
     assert.ok(navigationResult instanceof BrowserOperationError)
   } finally {
     await session.close()
+  }
+
+  const allowedBrief = `The login flow may redirect to ${externalUrl}/outside.`
+  const allowedSession = await BrowserSession.open({
+    startUrl: websiteUrl,
+    navigationPolicy: createNavigationPolicy(websiteUrl, allowedBrief),
+    budget: new RunBudget(),
+  })
+  try {
+    await allowedSession.execute({ type: 'navigate', url: '/allowed-redirect' })
+    assert.equal(allowedSession.currentUrl, `${externalUrl}/outside`)
+    assert.match(await allowedSession.observe(), /Named external destination/)
+    assert.equal(externalRequests, 1)
+  } finally {
+    await allowedSession.close()
   }
 })

@@ -29,6 +29,12 @@ export interface BrowserSessionOptions {
   sensitiveValues?: readonly string[]
 }
 
+type CachedDocumentResponse = {
+  status: number
+  headers: Record<string, string>
+  body: Buffer
+}
+
 export class BrowserSession {
   private readonly browser: Browser
   private readonly context: BrowserContext
@@ -39,7 +45,9 @@ export class BrowserSession {
   private readonly consoleErrors: string[] = []
   private readonly failedRequests: string[] = []
   private readonly knownSensitiveValues = new Set<string>()
+  private readonly prefetchedDocuments = new Map<string, CachedDocumentResponse>()
   private blockedNavigation: string | undefined
+  private redirectedDocumentUrl: string | undefined
   private closed = false
 
   private constructor(
@@ -114,6 +122,7 @@ export class BrowserSession {
     this.assertUsable()
     this.budget.recordBrowserOperation()
     this.blockedNavigation = undefined
+    this.redirectedDocumentUrl = undefined
 
     try {
       switch (operation.type) {
@@ -149,6 +158,8 @@ export class BrowserSession {
           break
       }
 
+      if (this.blockedNavigation) throw new BrowserOperationError(this.blockedNavigation)
+      await this.completeAllowedRedirects()
       if (this.blockedNavigation) throw new BrowserOperationError(this.blockedNavigation)
       return describeOperation(operation)
     } catch (error) {
@@ -202,12 +213,22 @@ export class BrowserSession {
   private async installNavigationGuard(): Promise<void> {
     await this.context.route('**/*', async (route) => {
       const request = route.request()
-      if (request.resourceType() !== 'document') {
+      if (
+        request.resourceType() !== 'document' ||
+        !request.isNavigationRequest() ||
+        request.frame().parentFrame() !== null
+      ) {
         await route.continue()
         return
       }
 
       try {
+        const cached = this.prefetchedDocuments.get(request.url())
+        if (cached) {
+          this.prefetchedDocuments.delete(request.url())
+          await route.fulfill(cached)
+          return
+        }
         await this.fulfillDocumentNavigation(route)
       } catch (error) {
         const reason = error instanceof Error ? error.message : 'Navigation target is not allowed.'
@@ -243,6 +264,18 @@ export class BrowserSession {
       const location = response.headers()['location']
 
       if (status < 300 || status >= 400 || !location) {
+        if (currentUrl.href !== request.url()) {
+          this.redirectedDocumentUrl = currentUrl.href
+          const responseHeaders = await response.headers()
+          delete responseHeaders['content-encoding']
+          delete responseHeaders['content-length']
+          delete responseHeaders['transfer-encoding']
+          this.prefetchedDocuments.set(currentUrl.href, {
+            status,
+            headers: responseHeaders,
+            body: await response.body(),
+          })
+        }
         await route.fulfill({ response })
         return
       }
@@ -267,6 +300,20 @@ export class BrowserSession {
         delete headers['content-type']
       }
       currentUrl = destination
+    }
+  }
+
+  private async completeAllowedRedirects(): Promise<void> {
+    for (let count = 0; this.redirectedDocumentUrl && count < 10; count += 1) {
+      const destination = this.redirectedDocumentUrl
+      this.redirectedDocumentUrl = undefined
+      if (destination === this.page.url()) return
+      this.budget.recordBrowserOperation()
+      await this.page.goto(destination, { waitUntil: 'domcontentloaded', timeout: 15_000 })
+      if (this.blockedNavigation) return
+    }
+    if (this.redirectedDocumentUrl) {
+      this.blockedNavigation = 'Navigation exceeded Phloem\'s 10-redirect limit.'
     }
   }
 
