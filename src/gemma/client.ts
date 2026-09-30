@@ -132,6 +132,9 @@ export class GemmaClient {
     if (options.apiKey.trim().length === 0) throw new Error('A Gemma API key is required.')
     this.apiKey = options.apiKey
     this.model = options.model ?? process.env.PHLOEM_GEMMA_MODEL ?? DEFAULT_GEMMA_MODEL
+    if (!/^gemma-[a-z0-9._-]+$/i.test(this.model)) {
+      throw new Error('Phloem v0.1 only supports Google Gemma models.')
+    }
     this.budget = options.budget ?? new RunBudget()
     this.fetchImpl = options.fetchImpl ?? fetch
   }

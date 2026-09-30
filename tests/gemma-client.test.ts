@@ -112,3 +112,10 @@ test('cancellation does not count as a failed Gemma request', async () => {
   await assert.rejects(budget.runGemmaRequest(async () => 'unused', controller.signal), RunCancelledError)
   assert.equal(await budget.runGemmaRequest(async () => 'usable response'), 'usable response')
 })
+
+test('Gemma client refuses non-Gemma model identifiers', () => {
+  assert.throws(
+    () => new GemmaClient({ apiKey: 'test-api-key', model: 'gemini-3.8-flash', fetchImpl: fetch }),
+    /only supports Google Gemma/,
+  )
+})
