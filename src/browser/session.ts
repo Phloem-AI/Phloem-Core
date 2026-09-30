@@ -64,6 +64,8 @@ export class BrowserSession {
       browser = await chromium.launch({ headless: true, chromiumSandbox: true })
       const context = await browser.newContext({ acceptDownloads: false })
       const page = await context.newPage()
+      page.setDefaultTimeout(5_000)
+      page.setDefaultNavigationTimeout(15_000)
       const session = new BrowserSession(browser, context, page, options)
       await session.installNavigationGuard()
       await session.execute({ type: 'navigate', url: options.startUrl.href })

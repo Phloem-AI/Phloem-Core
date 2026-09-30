@@ -119,6 +119,10 @@ export class RunBudget {
         : 0
     const providerDelay = Math.max(0, this.retryNotBefore - this.now())
     const waitMs = Math.max(spacingDelay, rollingWindowDelay, providerDelay)
+    const remainingRunTime = RUN_LIMITS.maxRunDurationMs - (this.now() - this.startedAt)
+    if (waitMs >= remainingRunTime) {
+      throw new RunLimitError('The required Gemma retry wait would exceed the 30-minute run time limit.')
+    }
     if (waitMs > 0) {
       await this.sleep(waitMs, signal)
       this.assertWithinTimeLimit(signal)

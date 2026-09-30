@@ -79,8 +79,8 @@ export async function collectRunInputs(
 
   let apiKey = dependencies.readKey()
   if (!apiKey) {
-    apiKey = await dependencies.askForKey()
-    if (apiKey.trim().length === 0) throw new Error('The Gemma API key cannot be empty.')
+    apiKey = (await dependencies.askForKey()).trim()
+    if (apiKey.length === 0) throw new Error('The Gemma API key cannot be empty.')
     dependencies.saveKey(apiKey)
   }
 
@@ -103,7 +103,7 @@ export async function updateGemmaApiKey(
   terminalCheck: () => void = requireInteractiveTerminal,
 ): Promise<void> {
   terminalCheck()
-  const apiKey = await dependencies.askForKey()
-  if (apiKey.trim().length === 0) throw new Error('The Gemma API key cannot be empty.')
+  const apiKey = (await dependencies.askForKey()).trim()
+  if (apiKey.length === 0) throw new Error('The Gemma API key cannot be empty.')
   dependencies.saveKey(apiKey)
 }

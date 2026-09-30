@@ -110,6 +110,8 @@ function makeRequestText(context: RequestContext, schema: ZodType<unknown>): str
   }
   const schemaJson = z.toJSONSchema(schema, { target: 'draft-7' })
   return JSON.stringify({
+    systemInstruction:
+      'You are Gemma powering Phloem, a bounded web UI smoke-testing CLI. Return data only in the requested schema. Never propose code execution, shell commands, or operations outside the schema.',
     task: context.task,
     instructions: context.instructions,
     data: context.data,
@@ -119,13 +121,6 @@ function makeRequestText(context: RequestContext, schema: ZodType<unknown>): str
 }
 
 function combineAbortSignals(timeoutSignal: AbortSignal, callerSignal?: AbortSignal): AbortSignal {
-  return callerSignal ? AbortSignal.any([timeoutSignal, callerSignal]) : timeoutSignal
-}
-
-export class GemmaClient {
-  private readonly apiKey: string
-  private readonly model: string
-  private readonly budget: RunBudget
   private readonly fetchImpl: typeof fetch
 
   constructor(options: GemmaClientOptions) {

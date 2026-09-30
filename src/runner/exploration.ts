@@ -235,12 +235,17 @@ async function withBrowser<T>(
 }
 
 async function requestWithRetries<T>(request: () => Promise<T>): Promise<T> {
+  let consecutiveFailures = 0
   while (true) {
     try {
       return await request()
     } catch (error) {
       if (error instanceof ThreeConsecutiveGemmaFailuresError) throw error
       if (!(error instanceof GemmaApiError || error instanceof GemmaResponseError)) throw error
+      consecutiveFailures += 1
+      if (consecutiveFailures >= 3) {
+        throw new ThreeConsecutiveGemmaFailuresError({ cause: error })
+      }
     }
   }
 }

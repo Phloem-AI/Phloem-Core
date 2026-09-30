@@ -56,6 +56,7 @@ test('Gemma client sends key only in header and validates objective plan JSON', 
   assert.equal(requestUrl.includes(apiKey), false)
   assert.equal(requestBody.includes(apiKey), false)
   assert.equal(requestBody.includes('Test the home page.'), true)
+  assert.equal(requestBody.includes('You are Gemma powering Phloem'), true)
 })
 
 test('Gemma client counts malformed structured output toward the three-failure stop', async () => {
