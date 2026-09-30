@@ -18,6 +18,7 @@ import {
   ThreeConsecutiveGemmaFailuresError,
 } from '../policy/run-budget.js'
 import type { RunInputs } from '../cli/prompts.js'
+import { extractSensitiveValues, redactText } from '../security/redaction.js'
 
 export type ObjectiveRunResult = {
   id: string
@@ -85,6 +86,7 @@ export async function runExploration(
   const model = dependencies.model ?? new GemmaClient({ apiKey: inputs.apiKey, budget })
   const openBrowser = dependencies.openBrowser ?? BrowserSession.open
   const results: ObjectiveRunResult[] = []
+  const sensitiveValues = [inputs.apiKey, ...extractSensitiveValues(inputs.brief)]
   let plan: ObjectivePlan | undefined
   let activeObjective: Objective | undefined
   let stopReason: string | undefined
@@ -95,6 +97,7 @@ export async function runExploration(
       navigationPolicy: inputs.navigationPolicy,
       budget,
       signal,
+      sensitiveValues,
     }, async (browser) => browser.observe())
 
     plan = await requestWithRetries(() => model.deriveObjectives(inputs.brief, discoverySnapshot, signal))
@@ -103,7 +106,7 @@ export async function runExploration(
       activeObjective = objective
       budget.beginObjective()
       try {
-        const result = await runObjective(objective, inputs, model, budget, openBrowser, results, signal)
+        const result = await runObjective(objective, inputs, model, budget, openBrowser, results, sensitiveValues, signal)
         results.push(result)
         activeObjective = undefined
       } catch (error) {
@@ -112,16 +115,16 @@ export async function runExploration(
       }
     }
   } catch (error) {
-    stopReason = safeText(errorMessage(error), inputs.apiKey)
+    stopReason = redactText(errorMessage(error), sensitiveValues)
     if (activeObjective && !results.some((result) => result.id === activeObjective?.id)) {
-      results.push(notRunResult(activeObjective, stopReason))
+      results.push(notRunResult(activeObjective, stopReason, sensitiveValues))
     }
   }
 
   if (stopReason && plan) {
     const completedIds = new Set(results.map((result) => result.id))
     for (const objective of plan.objectives) {
-      if (!completedIds.has(objective.id)) results.push(notRunResult(objective, stopReason))
+      if (!completedIds.has(objective.id)) results.push(notRunResult(objective, stopReason, sensitiveValues))
     }
   }
 
@@ -139,6 +142,7 @@ async function runObjective(
   budget: RunBudget,
   openBrowser: (options: BrowserSessionOptions) => Promise<BrowserSessionPort>,
   previousResults: ObjectiveRunResult[],
+  sensitiveValues: string[],
   signal?: AbortSignal,
 ): Promise<ObjectiveRunResult> {
   const active: ActiveObjective = {
@@ -155,6 +159,7 @@ async function runObjective(
       navigationPolicy: inputs.navigationPolicy,
       budget,
       signal,
+      sensitiveValues,
     },
     async (browser) => {
       active.snapshot = await browser.observe()
@@ -177,13 +182,13 @@ async function runObjective(
 
         try {
           const operationSummary = await browser.execute(response.operation)
-          active.observedSteps.push(safeText(operationSummary, inputs.apiKey))
+          active.observedSteps.push(redactText(operationSummary, sensitiveValues))
         } catch (error) {
           if (error instanceof RunLimitError || error instanceof RunCancelledError || error instanceof BrowserRuntimeError) {
             throw error
           }
           active.actionFailure = errorMessage(error)
-          active.observedSteps.push(`Operation failed: ${safeText(active.actionFailure, inputs.apiKey)}`)
+          active.observedSteps.push(`Operation failed: ${redactText(active.actionFailure, sensitiveValues)}`)
         }
 
         active.snapshot = await browser.observe()
@@ -205,12 +210,12 @@ async function runObjective(
       const reason = active.actionFailure ?? verdict.reason ?? completionSummary
       return {
         id: objective.id,
-        name: objective.name,
-        purpose: objective.purpose,
-        expectedOutcome: objective.expectedOutcome,
         status,
-        reason: safeText(reason, inputs.apiKey),
-        evidence: verdict.evidence.map((item) => safeText(item, inputs.apiKey)),
+        name: redactText(objective.name, sensitiveValues),
+        purpose: redactText(objective.purpose, sensitiveValues),
+        expectedOutcome: redactText(objective.expectedOutcome, sensitiveValues),
+        reason: redactText(reason, sensitiveValues),
+        evidence: verdict.evidence.map((item) => redactText(item, sensitiveValues)),
       }
     },
   )
@@ -247,22 +252,16 @@ function summarizeResults(results: ObjectiveRunResult[]): string {
     .slice(0, 10_000)
 }
 
-function notRunResult(objective: Objective, reason: string): ObjectiveRunResult {
+function notRunResult(objective: Objective, reason: string, sensitiveValues: string[]): ObjectiveRunResult {
   return {
-    id: objective.id,
-    name: objective.name,
-    purpose: objective.purpose,
-    expectedOutcome: objective.expectedOutcome,
+    id: redactText(objective.id, sensitiveValues),
+    name: redactText(objective.name, sensitiveValues),
+    purpose: redactText(objective.purpose, sensitiveValues),
+    expectedOutcome: redactText(objective.expectedOutcome, sensitiveValues),
     status: 'not run',
-    reason: safeText(reason, ''),
+    reason: redactText(reason, sensitiveValues),
     evidence: [],
   }
-}
-
-function safeText(value: string, apiKey: string): string {
-  let sanitized = value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ')
-  if (apiKey.length > 0) sanitized = sanitized.replaceAll(apiKey, '[redacted]')
-  return sanitized.slice(0, 1_000)
 }
 
 function errorMessage(error: unknown): string {

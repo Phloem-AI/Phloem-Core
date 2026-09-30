@@ -2,6 +2,7 @@ import { chromium, type Browser, type BrowserContext, type Page } from 'playwrig
 import type { BrowserOperation, Locator } from '../contracts.js'
 import { RunBudget } from '../policy/run-budget.js'
 import { resolveAllowedNavigation, UrlPolicyError, type NavigationPolicy } from '../policy/url-policy.js'
+import { redactText } from '../security/redaction.js'
 
 const MAX_SNAPSHOT_LENGTH = 30_000
 const MAX_DIAGNOSTICS = 10
@@ -25,6 +26,7 @@ export interface BrowserSessionOptions {
   navigationPolicy: NavigationPolicy
   budget: RunBudget
   signal?: AbortSignal
+  sensitiveValues?: readonly string[]
 }
 
 export class BrowserSession {
@@ -52,6 +54,7 @@ export class BrowserSession {
     this.navigationPolicy = options.navigationPolicy
     this.budget = options.budget
     this.signal = options.signal
+    for (const value of options.sensitiveValues ?? []) this.knownSensitiveValues.add(value)
     this.attachDiagnostics()
   }
 
@@ -223,11 +226,7 @@ export class BrowserSession {
   }
 
   private redactKnownValues(value: string): string {
-    let redacted = value
-    for (const sensitiveValue of this.knownSensitiveValues) {
-      if (sensitiveValue.length > 0) redacted = redacted.replaceAll(sensitiveValue, '[redacted]')
-    }
-    return redacted.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ')
+    return redactText(value, [...this.knownSensitiveValues])
   }
 
   private pushBounded(target: string[], value: string): void {
