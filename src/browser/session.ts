@@ -349,7 +349,7 @@ function safePageUrl(value: string): string {
 }
 
 function isSensitiveLocator(name: string): boolean {
-  return /password|passcode|secret|token|credential|api\s*key/i.test(name)
+  return /password|passcode|secret|token|credential|api\s*key|username|user\s*name|email/i.test(name)
 }
 
 function describeOperation(operation: BrowserOperation): string {

@@ -170,7 +170,7 @@ async function runObjective(
             inputs.brief,
             objective,
             active.snapshot,
-            summarizeResults(previousResults),
+            summarizeProgress(previousResults, active.observedSteps),
             signal,
           ),
         )
@@ -255,6 +255,12 @@ function summarizeResults(results: ObjectiveRunResult[]): string {
     .map((result) => `${result.id}: ${result.status} - ${result.reason}`)
     .join('\n')
     .slice(0, 10_000)
+}
+
+function summarizeProgress(results: ObjectiveRunResult[], observedSteps: string[]): string {
+  const previousObjectives = summarizeResults(results).slice(-3_000)
+  const currentSteps = observedSteps.slice(-10).map((step, index) => `${index + 1}. ${step}`).join('\n').slice(-7_000)
+  return [`Completed objectives:\n${previousObjectives}`, `Current flow actions:\n${currentSteps}`].join('\n\n').slice(-10_000)
 }
 
 function notRunResult(objective: Objective, reason: string, sensitiveValues: string[]): ObjectiveRunResult {
