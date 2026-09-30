@@ -40,3 +40,27 @@ test('operation and objective caps stop further work', () => {
   for (let objective = 1; objective < RUN_LIMITS.maxObjectives; objective += 1) budget.beginObjective()
   assert.throws(() => budget.beginObjective(), RunLimitError)
 })
+
+test('provider retry-after delay takes precedence over the client minimum spacing', async () => {
+  let now = 1_000
+  const requestStarts: number[] = []
+  const budget = new RunBudget({
+    now: () => now,
+    sleep: async (milliseconds) => {
+      now += milliseconds
+    },
+  })
+  const retryError = Object.assign(new Error('rate limited'), { retryAfterMs: 18_000 })
+
+  await assert.rejects(
+    budget.runGemmaRequest(async () => {
+      requestStarts.push(now)
+      throw retryError
+    }),
+  )
+  await budget.runGemmaRequest(async () => {
+    requestStarts.push(now)
+  })
+
+  assert.ok(requestStarts[1]! - requestStarts[0]! >= 18_000)
+})

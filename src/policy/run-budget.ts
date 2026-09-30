@@ -58,6 +58,7 @@ export class RunBudget {
   private requestQueue: Promise<void> = Promise.resolve()
   private requestStarts: number[] = []
   private lastRequestStart = 0
+  private retryNotBefore = 0
   private consecutiveFailures = 0
   private objectiveCount = 0
   private objectiveOperations = 0
@@ -116,7 +117,8 @@ export class RunBudget {
       this.requestStarts.length >= RUN_LIMITS.maxRequestsPerMinute
         ? Math.max(0, this.requestStarts[0]! + 60_000 - this.now())
         : 0
-    const waitMs = Math.max(spacingDelay, rollingWindowDelay)
+    const providerDelay = Math.max(0, this.retryNotBefore - this.now())
+    const waitMs = Math.max(spacingDelay, rollingWindowDelay, providerDelay)
     if (waitMs > 0) {
       await this.sleep(waitMs, signal)
       this.assertWithinTimeLimit(signal)
@@ -132,6 +134,13 @@ export class RunBudget {
       this.consecutiveFailures = 0
     } catch (error) {
       if (error instanceof RunCancelledError) throw error
+      const retryAfterMs =
+        typeof error === 'object' && error !== null && 'retryAfterMs' in error
+          ? (error as { retryAfterMs?: unknown }).retryAfterMs
+          : undefined
+      if (typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+        this.retryNotBefore = Math.max(this.retryNotBefore, this.now() + retryAfterMs)
+      }
       this.consecutiveFailures += 1
       if (this.consecutiveFailures >= RUN_LIMITS.maxConsecutiveGemmaFailures) {
         throw new ThreeConsecutiveGemmaFailuresError({ cause: error })
