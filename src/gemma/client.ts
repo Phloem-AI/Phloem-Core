@@ -10,7 +10,7 @@ import {
 } from '../contracts.js'
 import { RUN_LIMITS, RunBudget, RunCancelledError } from '../policy/run-budget.js'
 
-export const DEFAULT_GEMMA_MODEL = 'gemma-3-27b-it'
+export const DEFAULT_GEMMA_MODEL = 'gemma-4-31b-it'
 const GEMMA_API_ROOT = 'https://generativelanguage.googleapis.com/v1beta/models'
 const MAX_BRIEF_CHARS = 20_000
 const MAX_SNAPSHOT_CHARS = 30_000

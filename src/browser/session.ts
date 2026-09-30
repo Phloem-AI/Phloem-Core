@@ -123,6 +123,7 @@ export class BrowserSession {
     this.budget.recordBrowserOperation()
     this.blockedNavigation = undefined
     this.redirectedDocumentUrl = undefined
+    let operationDescription: string | undefined
 
     try {
       switch (operation.type) {
@@ -143,10 +144,12 @@ export class BrowserSession {
         case 'fill':
           if (isSensitiveLocator(operation.target.name)) this.knownSensitiveValues.add(operation.value)
           await this.target(operation.target).fill(operation.value)
-          return `Filled the ${operation.target.role} named "${operation.target.name}" with [value omitted].`
+          operationDescription = `Filled the ${operation.target.role} named "${operation.target.name}" with [value omitted].`
+          break
         case 'select':
           await this.target(operation.target).selectOption(operation.value)
-          return `Selected an option in the ${operation.target.role} named "${operation.target.name}".`
+          operationDescription = `Selected an option in the ${operation.target.role} named "${operation.target.name}".`
+          break
         case 'press':
           await this.page.keyboard.press(operation.key)
           break
@@ -161,7 +164,7 @@ export class BrowserSession {
       if (this.blockedNavigation) throw new BrowserOperationError(this.blockedNavigation)
       await this.completeAllowedRedirects()
       if (this.blockedNavigation) throw new BrowserOperationError(this.blockedNavigation)
-      return describeOperation(operation)
+      return operationDescription ?? describeOperation(operation)
     } catch (error) {
       if (error instanceof BrowserOperationError) throw error
       if (!this.browser.isConnected() || this.page.isClosed()) {
