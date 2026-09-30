@@ -19,7 +19,7 @@ const validPlan = {
 function modelResponse(text: string, status = 200, headers?: HeadersInit): Response {
   return new Response(
     JSON.stringify({ candidates: [{ content: { parts: [{ text }] } }] }),
-    { status, headers },
+    { status, ...(headers ? { headers } : {}) },
   )
 }
 
