@@ -96,7 +96,7 @@ export async function runExploration(
       startUrl: inputs.websiteUrl,
       navigationPolicy: inputs.navigationPolicy,
       budget,
-      signal,
+      ...(signal ? { signal } : {}),
       sensitiveValues,
     }, async (browser) => browser.observe())
 
@@ -158,7 +158,7 @@ async function runObjective(
       startUrl: inputs.websiteUrl,
       navigationPolicy: inputs.navigationPolicy,
       budget,
-      signal,
+      ...(signal ? { signal } : {}),
       sensitiveValues,
     },
     async (browser) => {

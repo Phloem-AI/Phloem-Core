@@ -121,6 +121,13 @@ function makeRequestText(context: RequestContext, schema: ZodType<unknown>): str
 }
 
 function combineAbortSignals(timeoutSignal: AbortSignal, callerSignal?: AbortSignal): AbortSignal {
+  return callerSignal ? AbortSignal.any([timeoutSignal, callerSignal]) : timeoutSignal
+}
+
+export class GemmaClient {
+  private readonly apiKey: string
+  private readonly model: string
+  private readonly budget: RunBudget
   private readonly fetchImpl: typeof fetch
 
   constructor(options: GemmaClientOptions) {

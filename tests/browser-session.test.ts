@@ -81,8 +81,9 @@ test('Chromium blocks navigation to an origin not named in the brief', async (co
   })
 
   try {
-    await assert.rejects(session.execute({ type: 'navigate', url: '/redirect' }), BrowserOperationError)
+    const navigationResult = await session.execute({ type: 'navigate', url: '/redirect' }).catch((error: unknown) => error)
     assert.equal(externalRequests, 0)
+    assert.ok(navigationResult instanceof BrowserOperationError)
   } finally {
     await session.close()
   }

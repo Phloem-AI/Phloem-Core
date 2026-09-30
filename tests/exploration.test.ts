@@ -149,7 +149,11 @@ test('three consecutive Gemma failures stop the run and leave objectives not run
       throw new Error('Not reached')
     },
   }
-  const result = await runExploration(createInputs(), { model, budget: fakeBudget() })
+  const result = await runExploration(createInputs(), {
+    model,
+    budget: fakeBudget(),
+    openBrowser: async () => new FakeBrowser(),
+  })
 
   assert.equal(requestCount, 3)
   assert.equal(result.status, 'incomplete')

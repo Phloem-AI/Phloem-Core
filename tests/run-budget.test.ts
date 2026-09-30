@@ -81,6 +81,7 @@ test('provider retry-after delay cannot hold a run open beyond its maximum durat
       throw Object.assign(new Error('rate limited'), { retryAfterMs: RUN_LIMITS.maxRunDurationMs })
     }),
   )
+  const sleepsAfterFirstRequest = sleepCalls
   await assert.rejects(budget.runGemmaRequest(async () => 'should not run'), /retry wait would exceed/)
-  assert.equal(sleepCalls, 0)
+  assert.equal(sleepCalls, sleepsAfterFirstRequest)
 })

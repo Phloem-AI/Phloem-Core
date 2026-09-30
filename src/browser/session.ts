@@ -35,11 +35,11 @@ export class BrowserSession {
   private readonly page: Page
   private readonly navigationPolicy: NavigationPolicy
   private readonly budget: RunBudget
-  private readonly signal?: AbortSignal
+  private readonly signal: AbortSignal | undefined
   private readonly consoleErrors: string[] = []
   private readonly failedRequests: string[] = []
   private readonly knownSensitiveValues = new Set<string>()
-  private blockedNavigation?: string
+  private blockedNavigation: string | undefined
   private closed = false
 
   private constructor(
@@ -120,7 +120,7 @@ export class BrowserSession {
         case 'navigate': {
           const destination = resolveAllowedNavigation(operation.url, this.page.url(), this.navigationPolicy)
           await this.page.goto(destination.href, { waitUntil: 'domcontentloaded', timeout: 15_000 })
-          return `Navigated to ${safePageUrl(this.page.url())}.`
+          break
         }
         case 'click':
           await this.target(operation.target).click()
@@ -202,20 +202,72 @@ export class BrowserSession {
   private async installNavigationGuard(): Promise<void> {
     await this.context.route('**/*', async (route) => {
       const request = route.request()
-      if (!request.isNavigationRequest()) {
+      if (request.resourceType() !== 'document') {
         await route.continue()
         return
       }
 
       try {
-        resolveAllowedNavigation(request.url(), this.navigationPolicy.startUrl.href, this.navigationPolicy)
-        await route.continue()
+        await this.fulfillDocumentNavigation(route)
       } catch (error) {
         const reason = error instanceof Error ? error.message : 'Navigation target is not allowed.'
-        this.blockedNavigation = `Navigation blocked by Phloem origin policy: ${reason}`
+        if (error instanceof UrlPolicyError) {
+          this.blockedNavigation = `Navigation blocked by Phloem origin policy: ${reason}`
+        }
         await route.abort('blockedbyclient').catch(() => undefined)
       }
     })
+  }
+
+  private async fulfillDocumentNavigation(route: import('playwright').Route): Promise<void> {
+    const request = route.request()
+    let currentUrl = resolveAllowedNavigation(
+      request.url(),
+      this.navigationPolicy.startUrl.href,
+      this.navigationPolicy,
+    )
+    let method = request.method()
+    let postData = request.postDataBuffer() ?? undefined
+    let headers = await request.allHeaders()
+
+    for (let redirectCount = 0; redirectCount <= 10; redirectCount += 1) {
+      const response = await route.fetch({
+        url: currentUrl.href,
+        method,
+        ...(postData ? { postData } : {}),
+        headers,
+        maxRedirects: 0,
+        timeout: 15_000,
+      })
+      const status = response.status()
+      const location = response.headers()['location']
+
+      if (status < 300 || status >= 400 || !location) {
+        await route.fulfill({ response })
+        return
+      }
+
+      if (redirectCount === 10) {
+        throw new UrlPolicyError('Navigation exceeded Phloem\'s 10-redirect limit.')
+      }
+
+      const destination = resolveAllowedNavigation(location, currentUrl.href, this.navigationPolicy)
+      if (destination.origin !== currentUrl.origin) {
+        headers = { ...headers }
+        delete headers.authorization
+        delete headers['proxy-authorization']
+        const destinationCookies = await this.context.cookies(destination.href)
+        headers.cookie = destinationCookies.map(({ name, value }) => `${name}=${value}`).join('; ')
+      }
+
+      if ([301, 302, 303].includes(status) && method !== 'GET' && method !== 'HEAD') {
+        method = 'GET'
+        postData = undefined
+        delete headers['content-length']
+        delete headers['content-type']
+      }
+      currentUrl = destination
+    }
   }
 
   private redactInputValues(snapshot: string): string {
