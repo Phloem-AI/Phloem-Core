@@ -126,11 +126,10 @@ export class RunBudget {
     this.requestStarts.push(requestStartedAt)
     this.lastRequestStart = requestStartedAt
 
+    let result: T
     try {
-      const result = await request()
+      result = await request()
       this.consecutiveFailures = 0
-      this.assertWithinTimeLimit(signal)
-      return result
     } catch (error) {
       this.consecutiveFailures += 1
       if (this.consecutiveFailures >= RUN_LIMITS.maxConsecutiveGemmaFailures) {
@@ -138,6 +137,9 @@ export class RunBudget {
       }
       throw error
     }
+
+    this.assertWithinTimeLimit(signal)
+    return result
   }
 
   private assertWithinTimeLimit(signal?: AbortSignal): void {
