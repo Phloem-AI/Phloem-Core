@@ -1,18 +1,12 @@
 # Phloem
 
-Phloem is a local-first CLI for Gemma-guided web UI exploration and smoke testing. Give it a website URL and a short product brief; it derives user flows, explores them in a real browser, and reports which objectives passed or failed.
+If you build websites, Phloem can help you test them during development. It is a local-first CLI for Gemma-guided web UI exploration and smoke testing. Give it a website URL and a short product description; it derives user flows, explores them in a real browser, and reports which objectives passed or failed.
 
-## What It Does
-
-- Turns a product brief and an initial page snapshot into a bounded list of user-flow objectives.
-- Explores each objective sequentially, using the current page state to choose the next supported browser operation.
-- Runs browser actions locally with Playwright and headless Chromium.
-- Uses accessible roles and names to locate controls, and observes page snapshots, URL/title, visible text, console errors, and failed requests.
-- Asks Gemma to assess each completed flow against its expected outcome and prints a result for every objective.
+Phloem is still in beta, so expect things to break. Open a "issue" in the Issues tab to request for new features or to report a bug.
 
 ## v0.1 Capabilities
 
-The initial browser operation set includes same-origin navigation, accessible clicks, scrolling, filling and typing, selecting options, checking and unchecking controls, supported keyboard keys, and bounded waits for visible elements. Model responses are validated against strict schemas; Phloem maps only known operations to Playwright API calls and never evaluates model-generated code.
+The initial browser operation set includes same-origin navigation, accessible clicks, scrolling, filling and typing, selecting options, checking and unchecking controls, supported keyboard keys, and bounded waits for visible elements. Model responses are validated against strict schemas and Phloem maps only known operations to Playwright API calls and never evaluates model-generated code.
 
 Each objective gets a fresh, isolated headless Chromium session. Navigation is restricted to the starting origin and exact external origins named in the original brief; subdomains are not explored. Runs are bounded by objective, browser-operation, request-rate, and duration limits.
 
