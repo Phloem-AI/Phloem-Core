@@ -21,3 +21,9 @@ The target page may itself load third-party resources in Chromium. Phloem limits
 ## Scope
 
 Phloem v0.1 is exploratory smoke testing, not a full E2E suite. It tests brief-derived, user-visible flows and cannot guarantee exhaustive coverage of every route, state, endpoint, or input. HTTP/API testing, native mobile/desktop testing, source-code inspection, test recording/replay, and automatic repair loops are out of scope.
+
+## License and Contributions
+
+This project is licensed under the [Apache-2.0](LICENSE.md).
+
+Any meaningful contributions are welcome!
