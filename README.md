@@ -24,6 +24,6 @@ Phloem v0.1 is exploratory smoke testing, not a full E2E suite. It tests brief-d
 
 ## License and Contributions
 
-This project is licensed under the [Apache-2.0](LICENSE.md).
+This project is licensed under the [Apache-2.0](LICENSE).
 
 Any meaningful contributions are welcome!
