@@ -88,6 +88,23 @@ function extractText(payload: unknown): string {
   return text
 }
 
+function extractRawResponseText(payload: unknown): string | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined
+
+  const candidates = (payload as { candidates?: unknown }).candidates
+  if (!Array.isArray(candidates) || candidates.length === 0) return undefined
+
+  const content = (candidates[0] as { content?: unknown } | undefined)?.content
+  const parts = (content as { parts?: unknown } | undefined)?.parts
+  if (!Array.isArray(parts)) return undefined
+
+  const textParts = parts
+    .map((part) => (typeof part === 'object' && part !== null ? (part as { text?: unknown }).text : undefined))
+    .filter((part): part is string => typeof part === 'string')
+
+  return textParts.length > 0 ? textParts.join('') : undefined
+}
+
 function parseJsonResponse<T>(text: string, schema: ZodType<T>): T {
   let value: unknown
   try {
@@ -252,6 +269,11 @@ export class GemmaClient {
         } catch (error) {
           throw new GemmaResponseError('Gemma API returned invalid JSON.', { cause: error })
         }
+
+        const rawResponseText = extractRawResponseText(payload)
+        console.error(
+          `[Gemma raw text #${requestNumber}] ${task}\n${rawResponseText ?? '<no text content in response>'}`,
+        )
 
         return parseJsonResponse(extractText(payload), schema)
       } catch (error) {
