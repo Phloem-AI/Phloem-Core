@@ -1,4 +1,5 @@
-import { input, password } from '@inquirer/prompts'
+import { createPrompt, isEnterKey, makeTheme, useKeypress, usePrefix, useState } from '@inquirer/core'
+import clipboard from 'clipboardy'
 import { readGemmaApiKey, saveGemmaApiKey } from '../credentials/key-store.js'
 import { createNavigationPolicy, parseWebsiteUrl, type NavigationPolicy } from '../policy/url-policy.js'
 
@@ -23,6 +24,76 @@ export interface PromptDependencies {
   writeWarning: (message: string) => void
 }
 
+type PasteablePromptConfig = {
+  message: string
+  mask?: string
+  validate?: (value: string) => true | string | Promise<true | string>
+}
+
+const pasteableInput = createPrompt<string, PasteablePromptConfig>((config, done) => {
+  const theme = makeTheme()
+  const [status, setStatus] = useState<'idle' | 'loading' | 'done'>('idle')
+  const [value, setValue] = useState('')
+  const [errorMessage, setErrorMessage] = useState<string | undefined>()
+  const prefix = usePrefix({ status, theme })
+
+  useKeypress(async (key, readline) => {
+    if (status !== 'idle') return
+
+    if (key.ctrl && key.name === 'v') {
+      setStatus('loading')
+      try {
+        const pastedText = normalizePastedText(await clipboard.read())
+        if (pastedText.length === 0) {
+          setErrorMessage('The clipboard does not contain any text.')
+        } else {
+          readline.write(pastedText)
+          setValue(readline.line)
+          setErrorMessage(undefined)
+        }
+      } catch {
+        setErrorMessage('Could not read text from the clipboard.')
+      } finally {
+        setStatus('idle')
+      }
+      return
+    }
+
+    if (isEnterKey(key)) {
+      const answer = readline.line
+      setStatus('loading')
+      const validation = await config.validate?.(answer) ?? true
+      if (validation === true) {
+        setValue(answer)
+        setStatus('done')
+        done(answer)
+      } else {
+        setValue(answer)
+        setErrorMessage(validation)
+        setStatus('idle')
+        readline.write(answer)
+      }
+      return
+    }
+
+    setValue(readline.line)
+    setErrorMessage(undefined)
+  })
+
+  const visibleValue = config.mask ? config.mask.repeat(value.length) : value
+  const displayedValue = status === 'done' ? theme.style.answer(visibleValue) : visibleValue
+  const content = [prefix, theme.style.message(config.message, status), displayedValue].filter(Boolean).join(' ')
+  const hints = status === 'idle' ? theme.style.help('Press Ctrl+V to paste from the clipboard.') : ''
+  const error = errorMessage ? theme.style.error(errorMessage) : ''
+  return [content, [error, hints].filter(Boolean).join('\n')]
+})
+
+function normalizePastedText(value: string): string {
+  return value
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
+}
+
 export function requireInteractiveTerminal(
   stdin: Pick<NodeJS.ReadStream, 'isTTY'> = process.stdin,
   stdout: Pick<NodeJS.WriteStream, 'isTTY'> = process.stdout,
@@ -44,14 +115,13 @@ function createPromptDependencies(): PromptDependencies {
     readKey: readGemmaApiKey,
     saveKey: saveGemmaApiKey,
     askForKey: () =>
-      password({
+      pasteableInput({
         message: 'Enter your Google AI Studio / Gemini API key for Gemma',
         mask: '*',
-        toggleMask: false,
         validate: (value) => (value.trim().length > 0 ? true : 'The API key cannot be empty.'),
       }),
     askForUrl: () =>
-      input({
+      pasteableInput({
         message: URL_PROMPT,
         validate: (value) => {
           try {
@@ -63,7 +133,7 @@ function createPromptDependencies(): PromptDependencies {
         },
       }),
     askForBrief: () =>
-      input({
+      pasteableInput({
         message: 'Enter the product brief',
         validate: validateBrief,
       }),
