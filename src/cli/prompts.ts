@@ -60,7 +60,7 @@ const pasteableInput = createPrompt<string, PasteablePromptConfig>((config, done
     }
 
     if (isEnterKey(key)) {
-      const answer = readline.line
+      const answer = value
       setStatus('loading')
       const validation = await config.validate?.(answer) ?? true
       if (validation === true) {
@@ -83,9 +83,8 @@ const pasteableInput = createPrompt<string, PasteablePromptConfig>((config, done
   const visibleValue = config.mask ? config.mask.repeat(value.length) : value
   const displayedValue = status === 'done' ? theme.style.answer(visibleValue) : visibleValue
   const content = [prefix, theme.style.message(config.message, status), displayedValue].filter(Boolean).join(' ')
-  const hints = status === 'idle' ? theme.style.help('Press Ctrl+V to paste from the clipboard.') : ''
   const error = errorMessage ? theme.style.error(errorMessage) : ''
-  return [content, [error, hints].filter(Boolean).join('\n')]
+  return [content, error]
 })
 
 function normalizePastedText(value: string): string {
