@@ -129,6 +129,7 @@ export class GemmaClient {
   private readonly model: string
   private readonly budget: RunBudget
   private readonly fetchImpl: typeof fetch
+  private requestCount = 0
 
   constructor(options: GemmaClientOptions) {
     if (options.apiKey.trim().length === 0) throw new Error('A Gemma API key is required.')
@@ -201,6 +202,8 @@ export class GemmaClient {
     signal?: AbortSignal,
   ): Promise<T> {
     return this.budget.runGemmaRequest(async () => {
+      const requestNumber = ++this.requestCount
+      console.error(`[Gemma request #${requestNumber}] ${task} started.`)
       const timeoutController = new AbortController()
       const timeout = setTimeout(() => timeoutController.abort(), RUN_LIMITS.requestTimeoutMs)
       const requestSignal = combineAbortSignals(timeoutController.signal, signal)
@@ -232,6 +235,9 @@ export class GemmaClient {
           signal: requestSignal,
         })
 
+        const responseBody = await response.text()
+        logGemmaResponse(requestNumber, task, response, responseBody)
+
         if (!response.ok) {
           throw new GemmaApiError(
             `Gemma API returned HTTP ${response.status}.`,
@@ -242,7 +248,7 @@ export class GemmaClient {
 
         let payload: unknown
         try {
-          payload = await response.json()
+          payload = JSON.parse(responseBody) as unknown
         } catch (error) {
           throw new GemmaResponseError('Gemma API returned invalid JSON.', { cause: error })
         }
@@ -251,17 +257,53 @@ export class GemmaClient {
       } catch (error) {
         if (signal?.aborted) throw new RunCancelledError()
         if (timeoutController.signal.aborted) {
-          throw new GemmaApiError('Gemma request timed out after 60 seconds.', undefined, undefined, { cause: error })
+          const timeoutError = new GemmaApiError(
+            `Gemma request timed out after ${RUN_LIMITS.requestTimeoutMs / 1000} seconds.`,
+            undefined,
+            undefined,
+            { cause: error },
+          )
+          logGemmaRequestFailure(requestNumber, task, timeoutError)
+          throw timeoutError
         }
         if (error instanceof GemmaApiError || error instanceof GemmaResponseError || error instanceof RunCancelledError) {
+          logGemmaRequestFailure(requestNumber, task, error)
           throw error
         }
-        throw new GemmaApiError('Gemma request failed due to a network error.', undefined, undefined, { cause: error })
+        const networkError = new GemmaApiError('Gemma request failed due to a network error.', undefined, undefined, {
+          cause: error,
+        })
+        logGemmaRequestFailure(requestNumber, task, networkError)
+        throw networkError
       } finally {
         clearTimeout(timeout)
       }
     }, signal)
   }
+}
+
+function logGemmaResponse(requestNumber: number, task: string, response: Response, body: string): void {
+  const headers = Object.fromEntries(response.headers.entries())
+  console.error(
+    `[Gemma response #${requestNumber}] ${task} — HTTP ${response.status} ${response.statusText}` +
+      `\nHeaders: ${JSON.stringify(headers)}` +
+      `\nBody:\n${body.length > 0 ? body : '<empty response body>'}`,
+  )
+}
+
+function logGemmaRequestFailure(requestNumber: number, task: string, error: unknown): void {
+  console.error(`[Gemma request #${requestNumber}] ${task} failed: ${describeError(error)}`)
+}
+
+function describeError(error: unknown): string {
+  const causes: string[] = []
+  let current = error
+  while (current instanceof Error) {
+    causes.push(`${current.name}: ${current.message}`)
+    current = current.cause
+  }
+  if (causes.length === 0 && error !== undefined) return String(error)
+  return causes.join(' -> ')
 }
 
 function assertContextLength(label: string, value: string, maximum: number): void {

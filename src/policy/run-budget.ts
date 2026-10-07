@@ -6,7 +6,7 @@ export const RUN_LIMITS = {
   minRequestIntervalMs: 6_000,
   maxRequestsPerMinute: 10,
   maxConsecutiveGemmaFailures: 3,
-  requestTimeoutMs: 60_000,
+  requestTimeoutMs: 120_000,
 } as const
 
 export class RunLimitError extends Error {
@@ -18,9 +18,26 @@ export class RunLimitError extends Error {
 
 export class ThreeConsecutiveGemmaFailuresError extends Error {
   constructor(options?: ErrorOptions) {
-    super('Gemma failed to provide three consecutive usable responses.', options)
+    const failureReason = describeFailure(options?.cause)
+    super(
+      failureReason
+        ? `Gemma failed to provide three consecutive usable responses. Last failure: ${failureReason}`
+        : 'Gemma failed to provide three consecutive usable responses.',
+      options,
+    )
     this.name = 'ThreeConsecutiveGemmaFailuresError'
   }
+}
+
+function describeFailure(error: unknown): string {
+  const causes: string[] = []
+  let current = error
+  while (current instanceof Error) {
+    causes.push(`${current.name}: ${current.message}`)
+    current = current.cause
+  }
+  if (causes.length === 0 && error !== undefined) return String(error)
+  return causes.join(' -> ')
 }
 
 export class RunCancelledError extends Error {
