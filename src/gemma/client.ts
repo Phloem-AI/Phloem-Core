@@ -64,7 +64,7 @@ function parseRetryAfter(value: string | null, now = Date.now()): number | undef
   return Number.isFinite(date) ? Math.max(0, date - now) : undefined
 }
 
-function extractText(payload: unknown): string {
+function extractTextParts(payload: unknown): string[] {
   if (typeof payload !== 'object' || payload === null) {
     throw new GemmaResponseError('Gemma returned an invalid response envelope.')
   }
@@ -78,46 +78,41 @@ function extractText(payload: unknown): string {
   const parts = (content as { parts?: unknown } | undefined)?.parts
   if (!Array.isArray(parts)) throw new GemmaResponseError('Gemma returned no text content.')
 
-  const text = parts
-    .map((part) => (typeof part === 'object' && part !== null ? (part as { text?: unknown }).text : undefined))
-    .filter((part): part is string => typeof part === 'string')
-    .join('')
-    .trim()
-
-  if (text.length === 0) throw new GemmaResponseError('Gemma returned an empty response.')
-  return text
-}
-
-function extractRawResponseText(payload: unknown): string | undefined {
-  if (typeof payload !== 'object' || payload === null) return undefined
-
-  const candidates = (payload as { candidates?: unknown }).candidates
-  if (!Array.isArray(candidates) || candidates.length === 0) return undefined
-
-  const content = (candidates[0] as { content?: unknown } | undefined)?.content
-  const parts = (content as { parts?: unknown } | undefined)?.parts
-  if (!Array.isArray(parts)) return undefined
-
   const textParts = parts
     .map((part) => (typeof part === 'object' && part !== null ? (part as { text?: unknown }).text : undefined))
     .filter((part): part is string => typeof part === 'string')
 
-  return textParts.length > 0 ? textParts.join('') : undefined
+  if (textParts.length === 0 || textParts.every((part) => part.trim().length === 0)) {
+    throw new GemmaResponseError('Gemma returned an empty response.')
+  }
+  return textParts
 }
 
-function parseJsonResponse<T>(text: string, schema: ZodType<T>): T {
-  let value: unknown
-  try {
-    value = JSON.parse(text) as unknown
-  } catch (error) {
-    throw new GemmaResponseError('Gemma response was not valid JSON.', { cause: error })
+function parseJsonResponse<T>(textParts: string[], schema: ZodType<T>): T {
+  const candidates = [...textParts, textParts.join('')]
+  let lastJsonError: unknown
+  let lastSchemaError: unknown
+
+  for (const candidate of candidates) {
+    let value: unknown
+    try {
+      value = JSON.parse(candidate.trim()) as unknown
+    } catch (error) {
+      lastJsonError = error
+      continue
+    }
+
+    const parsed = schema.safeParse(value)
+    if (parsed.success) return parsed.data
+    lastSchemaError = parsed.error
   }
 
-  const parsed = schema.safeParse(value)
-  if (!parsed.success) {
-    throw new GemmaResponseError('Gemma response did not match the required Phloem schema.', { cause: parsed.error })
+  if (lastSchemaError) {
+    throw new GemmaResponseError('Gemma response did not match the required Phloem schema.', {
+      cause: lastSchemaError,
+    })
   }
-  return parsed.data
+  throw new GemmaResponseError('Gemma response was not valid JSON.', { cause: lastJsonError })
 }
 
 function makeRequestText(context: RequestContext, schema: ZodType<unknown>): string {
@@ -270,12 +265,13 @@ export class GemmaClient {
           throw new GemmaResponseError('Gemma API returned invalid JSON.', { cause: error })
         }
 
-        const rawResponseText = extractRawResponseText(payload)
+        const responseTextParts = extractTextParts(payload)
         console.error(
-          `[Gemma raw text #${requestNumber}] ${task}\n${rawResponseText ?? '<no text content in response>'}`,
+          `[Gemma raw text #${requestNumber}] ${task}\n` +
+            responseTextParts.map((part, index) => `Part ${index + 1}:\n${part}`).join('\n\n'),
         )
 
-        return parseJsonResponse(extractText(payload), schema)
+        return parseJsonResponse(responseTextParts, schema)
       } catch (error) {
         if (signal?.aborted) throw new RunCancelledError()
         if (timeoutController.signal.aborted) {
