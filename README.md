@@ -32,3 +32,6 @@ Follow the prompts in your terminal until you recieve final *Phloem smoke test r
 
 Browser automation runs on the user's machine. The brief and sanitized page snapshots are sent to the configured Google Gemma endpoint; demo credentials intentionally included in the brief are sent too. Do not include production credentials, API keys, or confidential information. Phloem does not inspect or upload application source code.
 
+## LICENSE
+
+Read the license for this project [here](LICENSE)
