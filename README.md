@@ -10,6 +10,18 @@ Phloem is a local-first CLI for Gemma-guided web UI exploration and smoke testin
 - Uses accessible roles and names to locate controls, and observes page snapshots, URL/title, visible text, console errors, and failed requests.
 - Asks Gemma to assess each completed flow against its expected outcome and prints a result for every objective.
 
+## Quick setup
+
+*Fork* the repo, *clone* it down locally on your machine. Then run:
+
+```
+cd phloem-core
+npm install
+npm start
+```
+
+If you want to know the **flags** that phloem supports, do: ```npm start -- --help``` , it lists down the flags you can pass as ```npm start -- --flag_name```.
+
 ## v0.1 Capabilities
 
 The initial browser operation set includes same-origin navigation, accessible clicks, scrolling, filling and typing, selecting options, checking and unchecking controls, supported keyboard keys, and bounded waits for visible elements. Model responses are validated against strict schemas; Phloem maps only known operations to Playwright API calls and never evaluates model-generated code.
