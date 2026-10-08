@@ -2,7 +2,7 @@
 
 If you build websites, Phloem can help you test them during development. It is a local-first CLI for Gemma-guided web UI exploration and smoke testing. Give it a website URL and a short product description; it derives user flows, explores them in a real browser, and reports which objectives passed or failed.
 
-Phloem is still in beta, so expect things to break. Open a "issue" in the Issues tab to request for new features or to report a bug.
+Phloem is still in beta, so expect things to break. Open a "issue" in the Issues tab to request for new features or to report a bug. Star ⭐ this repository to show your support :)
 
 ## v0.1 Capabilities
 
@@ -20,10 +20,9 @@ The target page may itself load third-party resources in Chromium. Phloem limits
 
 ## Scope
 
-Phloem v0.1 is exploratory smoke testing, not a full E2E suite. It tests brief-derived, user-visible flows and cannot guarantee exhaustive coverage of every route, state, endpoint, or input. HTTP/API testing, native mobile/desktop testing, source-code inspection, test recording/replay, and automatic repair loops are out of scope.
+Phloem v0.1 is exploratory smoke testing, not a full E2E suite. It tests brief-derived, user-visible flows and cannot guarantee exhaustive coverage of every route, state, endpoint, or input. Native mobile/desktop, API testing, source-code inspection, test recording/replay, and automatic repair loops are out of scope.
 
 ## License and Contributions
 
 This project is licensed under the [Apache-2.0](LICENSE).
 
-Any meaningful contributions are welcome!
