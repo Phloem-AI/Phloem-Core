@@ -242,7 +242,10 @@ export class GemmaClient {
                 parts: [{ text: makeRequestText({ task, instructions, data }, schema as ZodType<unknown>) }],
               },
             ],
-            generationConfig: { maxOutputTokens: 4096 },
+            generationConfig: { 
+              maxOutputTokens: 4096,
+              responseMimeType: "application/json"
+            },
           }),
           signal: requestSignal,
         })
