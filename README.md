@@ -6,7 +6,7 @@ Phloem is a local-first CLI for Gemma-guided web UI exploration and smoke testin
 
 - Turns a product brief and an initial page snapshot into a bounded list of user-flow objectives.
 - Explores each objective sequentially, using the current page state to choose the next supported browser operation.
-- Runs browser actions locally with Playwright and headless Chromium.
+- Runs browser actions locally with Playwright and headless Chromium by default. Pass `--headless=false` to show Chromium.
 - Uses accessible roles and names to locate controls, and observes page snapshots, URL/title, visible text, console errors, and failed requests.
 - Asks Gemma to assess each completed flow against its expected outcome and prints a result for every objective.
 
@@ -14,7 +14,7 @@ Phloem is a local-first CLI for Gemma-guided web UI exploration and smoke testin
 
 The initial browser operation set includes same-origin navigation, accessible clicks, scrolling, filling and typing, selecting options, checking and unchecking controls, supported keyboard keys, and bounded waits for visible elements. Model responses are validated against strict schemas; Phloem maps only known operations to Playwright API calls and never evaluates model-generated code.
 
-Each objective gets a fresh, isolated headless Chromium session. Navigation is restricted to the starting origin and exact external origins named in the original brief; subdomains are not explored. Runs are bounded by objective, browser-operation, request-rate, and duration limits.
+Each objective gets a fresh, isolated Chromium session. It runs headless by default; pass `--headless=false` to show the browser. Navigation is restricted to the starting origin and exact external origins named in the original brief; subdomains are not explored. Runs are bounded by objective, browser-operation, request-rate, and duration limits.
 
 Results are printed in the terminal as `passed`, `failed`, or `not run`, with the expected outcome, concise evidence, and a run stop reason when applicable. v0.1 does not save browser profiles, persistent evidence, replayable tests, or recordings.
 
