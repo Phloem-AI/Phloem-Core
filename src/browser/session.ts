@@ -25,6 +25,7 @@ export interface BrowserSessionOptions {
   startUrl: URL
   navigationPolicy: NavigationPolicy
   budget: RunBudget
+  headless?: boolean
   signal?: AbortSignal
   sensitiveValues?: readonly string[]
 }
@@ -69,7 +70,7 @@ export class BrowserSession {
   static async open(options: BrowserSessionOptions): Promise<BrowserSession> {
     let browser: Browser | undefined
     try {
-      browser = await chromium.launch({ headless: true, chromiumSandbox: true })
+      browser = await chromium.launch({ headless: options.headless ?? true, chromiumSandbox: true })
       const context = await browser.newContext({ acceptDownloads: false })
       const page = await context.newPage()
       page.setDefaultTimeout(5_000)

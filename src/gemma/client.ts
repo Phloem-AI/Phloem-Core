@@ -217,11 +217,20 @@ export class GemmaClient {
       const requestNumber = ++this.requestCount
       console.error(`[Gemma request #${requestNumber}] ${task} started.`)
       const timeoutController = new AbortController()
-      const timeout = setTimeout(() => timeoutController.abort(), RUN_LIMITS.requestTimeoutMs)
       const requestSignal = combineAbortSignals(timeoutController.signal, signal)
+      const timeoutError = new GemmaApiError(
+        'Gemma request timed out after ' + RUN_LIMITS.requestTimeoutMs / 1000 + ' seconds.',
+      )
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+      const timeoutPromise = new Promise<never>((_resolve, reject) => {
+        timeoutHandle = setTimeout(() => {
+          timeoutController.abort(timeoutError)
+          reject(timeoutError)
+        }, RUN_LIMITS.requestTimeoutMs)
+      })
 
-      try {
-        const endpoint = `${GEMMA_API_ROOT}/${encodeURIComponent(this.model)}:generateContent`
+      const requestPromise = (async () => {
+        const endpoint = GEMMA_API_ROOT + '/' + encodeURIComponent(this.model) + ':generateContent'
         const response = await this.fetchImpl(endpoint, {
           method: 'POST',
           headers: {
@@ -242,9 +251,9 @@ export class GemmaClient {
                 parts: [{ text: makeRequestText({ task, instructions, data }, schema as ZodType<unknown>) }],
               },
             ],
-            generationConfig: { 
+            generationConfig: {
               maxOutputTokens: 4096,
-              responseMimeType: "application/json"
+              responseMimeType: 'application/json',
             },
           }),
           signal: requestSignal,
@@ -255,7 +264,7 @@ export class GemmaClient {
 
         if (!response.ok) {
           throw new GemmaApiError(
-            `Gemma API returned HTTP ${response.status}.`,
+            'Gemma API returned HTTP ' + response.status + '.',
             response.status,
             parseRetryAfter(response.headers.get('retry-after')),
           )
@@ -270,20 +279,18 @@ export class GemmaClient {
 
         const responseTextParts = extractTextParts(payload)
         console.error(
-          `[Gemma raw text #${requestNumber}] ${task}\n` +
-            responseTextParts.map((part, index) => `Part ${index + 1}:\n${part}`).join('\n\n'),
+          '[Gemma raw text #' + requestNumber + '] ' + task + '\n' +
+            responseTextParts.map((part, index) => 'Part ' + (index + 1) + ':\n' + part).join('\n\n'),
         )
 
         return parseJsonResponse(responseTextParts, schema)
+      })()
+
+      try {
+        return await Promise.race([requestPromise, timeoutPromise])
       } catch (error) {
         if (signal?.aborted) throw new RunCancelledError()
         if (timeoutController.signal.aborted) {
-          const timeoutError = new GemmaApiError(
-            `Gemma request timed out after ${RUN_LIMITS.requestTimeoutMs / 1000} seconds.`,
-            undefined,
-            undefined,
-            { cause: error },
-          )
           logGemmaRequestFailure(requestNumber, task, timeoutError)
           throw timeoutError
         }
@@ -297,7 +304,7 @@ export class GemmaClient {
         logGemmaRequestFailure(requestNumber, task, networkError)
         throw networkError
       } finally {
-        clearTimeout(timeout)
+        if (timeoutHandle !== undefined) clearTimeout(timeoutHandle)
       }
     }, signal)
   }

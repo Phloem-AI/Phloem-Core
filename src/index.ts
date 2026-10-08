@@ -5,21 +5,38 @@ import { RUN_LIMITS, RunBudget } from './policy/run-budget.js'
 import { runExploration } from './runner/exploration.js'
 
 function printHelp(): void {
-  console.log('Usage: phloem [--update-key | --help]')
-  console.log('  --update-key  Replace the saved Gemma API key')
+  console.log('Usage: phloem [--headless=true|false] [--update-key | --help]')
+  console.log('  --headless=false  Show the Chromium browser (default: headless)')
+  console.log('  --headless=true   Run Chromium without a visible window')
+  console.log('  --update-key      Replace the saved Gemma API key')
+}
+
+function parseHeadlessFlag(arguments_: string[]): { headless: boolean; remainingArguments: string[] } {
+  const headlessArguments = arguments_.filter((argument) => argument.startsWith('--headless='))
+  if (headlessArguments.length > 1) throw new Error('Pass the --headless option only once.')
+
+  const remainingArguments = arguments_.filter((argument) => !argument.startsWith('--headless='))
+  if (headlessArguments.length === 0) return { headless: true, remainingArguments }
+
+  const value = headlessArguments[0]!.slice('--headless='.length)
+  if (value !== 'true' && value !== 'false') {
+    throw new Error('Use --headless=true or --headless=false.')
+  }
+  return { headless: value === 'true', remainingArguments }
 }
 
 async function main(arguments_: string[] = process.argv.slice(2)): Promise<void> {
-  if (arguments_.length === 1 && arguments_[0] === '--help') {
+  const { headless, remainingArguments } = parseHeadlessFlag(arguments_)
+  if (remainingArguments.length === 1 && remainingArguments[0] === '--help') {
     printHelp()
     return
   }
-  if (arguments_.length === 1 && arguments_[0] === '--update-key') {
+  if (remainingArguments.length === 1 && remainingArguments[0] === '--update-key') {
     await updateGemmaApiKey()
     console.log('Gemma API key updated in the operating system credential store.')
     return
   }
-  if (arguments_.length > 0) {
+  if (remainingArguments.length > 0) {
     throw new Error('Unknown command. Use --help to see available commands.')
   }
 
@@ -32,7 +49,7 @@ async function main(arguments_: string[] = process.argv.slice(2)): Promise<void>
   try {
     const budget = new RunBudget()
     const gemma = new GemmaClient({ apiKey: runInputs.apiKey, budget })
-    const result = await runExploration(runInputs, { model: gemma, budget }, controller.signal)
+    const result = await runExploration(runInputs, { model: gemma, budget, headless }, controller.signal)
     printResult(result)
     if (result.status === 'incomplete' || result.objectives.some((objective) => objective.status === 'failed')) {
       process.exitCode = 1

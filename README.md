@@ -1,28 +1,37 @@
 # Phloem
 
-If you build websites, Phloem can help you test them during development. It is a local-first CLI for Gemma-guided web UI exploration and smoke testing. Give it a website URL and a short product description; it derives user flows, explores them in a real browser, and reports which objectives passed or failed.
+Phloem is a local-first CLI for Gemma-guided **website** exploration and smoke testing. Give it a website URL and a short product brief; it derives user flows, explores them in a real browser, and reports which objectives passed or failed.
 
-Phloem is still in beta, so expect things to break. Open a "issue" in the Issues tab to request for new features or to report a bug. Star ⭐ this repository to show your support :)
+**DISCLAIMER:** This project is under development, so expect some things to break. Report any bugs on "issues" tab.
 
-## v0.1 Capabilities
+## What It Does
 
-The initial browser operation set includes same-origin navigation, accessible clicks, scrolling, filling and typing, selecting options, checking and unchecking controls, supported keyboard keys, and bounded waits for visible elements. Model responses are validated against strict schemas and Phloem maps only known operations to Playwright API calls and never evaluates model-generated code.
+- Turns a product brief and an initial page snapshot into a bounded list of user-flow objectives.
+- Explores each objective sequentially, using the current page state to choose the next supported browser operation.
+- Runs browser actions locally with Playwright and headless Chromium by default. Pass `--headless=false` as flag to show Chromium.
+- Uses accessible roles and names to locate controls, and observes page snapshots, URL/title, visible text, console errors, and failed requests.
+- Asks Gemma to assess each completed flow against its expected outcome and prints a result for every objective.
 
-Each objective gets a fresh, isolated headless Chromium session. Navigation is restricted to the starting origin and exact external origins named in the original brief; subdomains are not explored. Runs are bounded by objective, browser-operation, request-rate, and duration limits.
+## Quick setup
 
-Results are printed in the terminal as `passed`, `failed`, or `not run`, with the expected outcome, concise evidence, and a run stop reason when applicable. v0.1 does not save browser profiles, persistent evidence, replayable tests, or recordings.
+*Fork* the repo, *clone* it down locally on your machine. Then run:
+
+```
+cd phloem-core
+npm install
+npm start
+```
+
+If you want to know the **flags** that phloem supports, do: ```npm start -- --help``` , it lists down the flags you can pass as ```npm start -- --flag_name```.
+
+Follow the prompts in your terminal until you recieve final *Phloem smoke test results* summary and it quits out of terminal.
+
+**NOTE:** If at anytime a certain gemma-request or a certain gemma-response gets **stuck in pending** for more than 3 minutes, or if phloem **isn't showing additional requests** during process for more than 1 minute, then manually abort the process using *ctrl+C*.
 
 ## Local-First and Data
 
 Browser automation runs on the user's machine. The brief and sanitized page snapshots are sent to the configured Google Gemma endpoint; demo credentials intentionally included in the brief are sent too. Do not include production credentials, API keys, or confidential information. Phloem does not inspect or upload application source code.
 
-The target page may itself load third-party resources in Chromium. Phloem limits its own navigations, but a run is not a network-isolated browser session.
+## LICENSE
 
-## Scope
-
-Phloem v0.1 is exploratory smoke testing, not a full E2E suite. It tests brief-derived, user-visible flows and cannot guarantee exhaustive coverage of every route, state, endpoint, or input. Native mobile/desktop, API testing, source-code inspection, test recording/replay, and automatic repair loops are out of scope.
-
-## License and Contributions
-
-This project is licensed under the [Apache-2.0](LICENSE).
-
+Read the license for this project [here](LICENSE)

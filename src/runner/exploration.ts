@@ -12,10 +12,11 @@ import {
 } from '../browser/session.js'
 import { GemmaApiError, GemmaClient, GemmaResponseError } from '../gemma/client.js'
 import {
+  RUN_LIMITS,
   RunBudget,
   RunCancelledError,
   RunLimitError,
-  ThreeConsecutiveGemmaFailuresError,
+  GemmaFailureLimitError,
 } from '../policy/run-budget.js'
 import type { RunInputs } from '../cli/prompts.js'
 import { extractSensitiveValues, redactText } from '../security/redaction.js'
@@ -67,6 +68,7 @@ export type ObjectiveOperation = import('../contracts.js').BrowserOperation
 export interface ExplorationDependencies {
   model?: ExplorationModel
   budget?: RunBudget
+  headless?: boolean
   openBrowser?: (options: BrowserSessionOptions) => Promise<BrowserSessionPort>
 }
 
@@ -84,7 +86,10 @@ export async function runExploration(
 ): Promise<ExplorationResult> {
   const budget = dependencies.budget ?? new RunBudget()
   const model = dependencies.model ?? new GemmaClient({ apiKey: inputs.apiKey, budget })
-  const openBrowser = dependencies.openBrowser ?? BrowserSession.open
+  const openBrowser =
+    dependencies.openBrowser ??
+    ((options: BrowserSessionOptions) =>
+      BrowserSession.open({ ...options, headless: dependencies.headless ?? true }))
   const results: ObjectiveRunResult[] = []
   const sensitiveValues = [inputs.apiKey, ...extractSensitiveValues(inputs.brief)]
   let plan: ObjectivePlan | undefined
@@ -240,11 +245,11 @@ async function requestWithRetries<T>(request: () => Promise<T>): Promise<T> {
     try {
       return await request()
     } catch (error) {
-      if (error instanceof ThreeConsecutiveGemmaFailuresError) throw error
+      if (error instanceof GemmaFailureLimitError) throw error
       if (!(error instanceof GemmaApiError || error instanceof GemmaResponseError)) throw error
       consecutiveFailures += 1
-      if (consecutiveFailures >= 3) {
-        throw new ThreeConsecutiveGemmaFailuresError({ cause: error })
+      if (consecutiveFailures >= RUN_LIMITS.maxConsecutiveGemmaFailures) {
+        throw new GemmaFailureLimitError({ cause: error })
       }
     }
   }
@@ -281,7 +286,7 @@ function errorMessage(error: unknown): string {
 
 function isRunStoppingError(error: unknown): boolean {
   return (
-    error instanceof ThreeConsecutiveGemmaFailuresError ||
+    error instanceof GemmaFailureLimitError ||
     error instanceof RunLimitError ||
     error instanceof RunCancelledError ||
     error instanceof BrowserRuntimeError
