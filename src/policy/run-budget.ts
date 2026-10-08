@@ -6,7 +6,7 @@ export const RUN_LIMITS = {
   minRequestIntervalMs: 6_000,
   maxRequestsPerMinute: 10,
   maxConsecutiveGemmaFailures: 3,
-  requestTimeoutMs: 120_000,
+  requestTimeoutMs: 150_000,
 } as const
 
 export class RunLimitError extends Error {
