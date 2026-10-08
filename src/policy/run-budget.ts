@@ -6,7 +6,7 @@ export const RUN_LIMITS = {
   minRequestIntervalMs: 15_000,
   consecutiveFailureBackoffMs: 60_000,
   maxRequestsPerMinute: 10,
-  maxConsecutiveGemmaFailures: 5,
+  maxConsecutiveGemmaFailures: 10,
   requestTimeoutMs: 150_000,
 } as const
 
@@ -22,8 +22,8 @@ export class GemmaFailureLimitError extends Error {
     const failureReason = describeFailure(options?.cause)
     super(
       failureReason
-        ? `Gemma failed to provide five consecutive usable responses. Last failure: ${failureReason}`
-        : 'Gemma failed to provide five consecutive usable responses.',
+        ? `Gemma failed to provide ten consecutive usable responses. Last failure: ${failureReason}`
+        : 'Gemma failed to provide ten consecutive usable responses.',
       options,
     )
     this.name = 'GemmaFailureLimitError'
@@ -168,7 +168,7 @@ export class RunBudget {
         this.retryNotBefore = Math.max(this.retryNotBefore, failedAt + retryAfterMs)
       }
       this.consecutiveFailures += 1
-      if (this.consecutiveFailures >= 3) {
+      if (this.consecutiveFailures % 5 === 3 || this.consecutiveFailures % 5 === 4) {
         this.retryNotBefore = Math.max(
           this.retryNotBefore,
           failedAt + RUN_LIMITS.consecutiveFailureBackoffMs,
