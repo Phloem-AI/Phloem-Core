@@ -3,9 +3,10 @@ export const RUN_LIMITS = {
   maxOperationsPerObjective: 25,
   maxOperationsPerRun: 150,
   maxRunDurationMs: 30 * 60 * 1000,
-  minRequestIntervalMs: 6_000,
+  minRequestIntervalMs: 15_000,
+  consecutiveFailureBackoffMs: 60_000,
   maxRequestsPerMinute: 10,
-  maxConsecutiveGemmaFailures: 3,
+  maxConsecutiveGemmaFailures: 5,
   requestTimeoutMs: 150_000,
 } as const
 
@@ -16,18 +17,20 @@ export class RunLimitError extends Error {
   }
 }
 
-export class ThreeConsecutiveGemmaFailuresError extends Error {
+export class GemmaFailureLimitError extends Error {
   constructor(options?: ErrorOptions) {
     const failureReason = describeFailure(options?.cause)
     super(
       failureReason
-        ? `Gemma failed to provide three consecutive usable responses. Last failure: ${failureReason}`
-        : 'Gemma failed to provide three consecutive usable responses.',
+        ? `Gemma failed to provide five consecutive usable responses. Last failure: ${failureReason}`
+        : 'Gemma failed to provide five consecutive usable responses.',
       options,
     )
-    this.name = 'ThreeConsecutiveGemmaFailuresError'
+    this.name = 'GemmaFailureLimitError'
   }
 }
+
+export { GemmaFailureLimitError as ThreeConsecutiveGemmaFailuresError }
 
 function describeFailure(error: unknown): string {
   const causes: string[] = []
@@ -74,7 +77,7 @@ export class RunBudget {
   private readonly sleep: (milliseconds: number, signal?: AbortSignal) => Promise<void>
   private requestQueue: Promise<void> = Promise.resolve()
   private requestStarts: number[] = []
-  private lastRequestStart = 0
+  private lastRequestCompletedAt = 0
   private retryNotBefore = 0
   private consecutiveFailures = 0
   private objectiveCount = 0
@@ -129,7 +132,7 @@ export class RunBudget {
     this.assertWithinTimeLimit(signal)
     this.requestStarts = this.requestStarts.filter((startedAt) => this.now() - startedAt < 60_000)
 
-    const spacingDelay = Math.max(0, this.lastRequestStart + RUN_LIMITS.minRequestIntervalMs - this.now())
+    const spacingDelay = Math.max(0, this.lastRequestCompletedAt + RUN_LIMITS.minRequestIntervalMs - this.now())
     const rollingWindowDelay =
       this.requestStarts.length >= RUN_LIMITS.maxRequestsPerMinute
         ? Math.max(0, this.requestStarts[0]! + 60_000 - this.now())
@@ -147,24 +150,32 @@ export class RunBudget {
 
     const requestStartedAt = this.now()
     this.requestStarts.push(requestStartedAt)
-    this.lastRequestStart = requestStartedAt
 
     let result: T
     try {
       result = await request()
+      this.lastRequestCompletedAt = this.now()
       this.consecutiveFailures = 0
     } catch (error) {
       if (error instanceof RunCancelledError) throw error
+      const failedAt = this.now()
+      this.lastRequestCompletedAt = failedAt
       const retryAfterMs =
         typeof error === 'object' && error !== null && 'retryAfterMs' in error
           ? (error as { retryAfterMs?: unknown }).retryAfterMs
           : undefined
       if (typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
-        this.retryNotBefore = Math.max(this.retryNotBefore, this.now() + retryAfterMs)
+        this.retryNotBefore = Math.max(this.retryNotBefore, failedAt + retryAfterMs)
       }
       this.consecutiveFailures += 1
+      if (this.consecutiveFailures >= 3) {
+        this.retryNotBefore = Math.max(
+          this.retryNotBefore,
+          failedAt + RUN_LIMITS.consecutiveFailureBackoffMs,
+        )
+      }
       if (this.consecutiveFailures >= RUN_LIMITS.maxConsecutiveGemmaFailures) {
-        throw new ThreeConsecutiveGemmaFailuresError({ cause: error })
+        throw new GemmaFailureLimitError({ cause: error })
       }
       throw error
     }
