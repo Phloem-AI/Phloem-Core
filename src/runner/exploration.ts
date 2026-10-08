@@ -68,6 +68,7 @@ export type ObjectiveOperation = import('../contracts.js').BrowserOperation
 export interface ExplorationDependencies {
   model?: ExplorationModel
   budget?: RunBudget
+  headless?: boolean
   openBrowser?: (options: BrowserSessionOptions) => Promise<BrowserSessionPort>
 }
 
@@ -85,7 +86,10 @@ export async function runExploration(
 ): Promise<ExplorationResult> {
   const budget = dependencies.budget ?? new RunBudget()
   const model = dependencies.model ?? new GemmaClient({ apiKey: inputs.apiKey, budget })
-  const openBrowser = dependencies.openBrowser ?? BrowserSession.open
+  const openBrowser =
+    dependencies.openBrowser ??
+    ((options: BrowserSessionOptions) =>
+      BrowserSession.open({ ...options, headless: dependencies.headless ?? true }))
   const results: ObjectiveRunResult[] = []
   const sensitiveValues = [inputs.apiKey, ...extractSensitiveValues(inputs.brief)]
   let plan: ObjectivePlan | undefined
