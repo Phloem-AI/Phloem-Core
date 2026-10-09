@@ -216,17 +216,25 @@ export class BrowserSession {
 
   private async installNavigationGuard(): Promise<void> {
     await this.context.route('**/*', async (route) => {
-      const request = route.request()
-      if (
-        request.resourceType() !== 'document' ||
-        !request.isNavigationRequest() ||
-        request.frame().parentFrame() !== null
-      ) {
-        await route.continue()
-        return
-      }
-
       try {
+        const request = route.request()
+        if (request.resourceType() !== 'document' || !request.isNavigationRequest()) {
+          await route.continue()
+          return
+        }
+
+        let isSubframeNavigation = false
+        try {
+          isSubframeNavigation = request.frame().parentFrame() !== null
+        } catch {
+          // Playwright can issue a navigation before its frame exists. Treat it
+          // as a main-frame candidate so it still passes through origin policy.
+        }
+        if (isSubframeNavigation) {
+          await route.continue()
+          return
+        }
+
         const cached = this.prefetchedDocuments.get(request.url())
         if (cached) {
           this.prefetchedDocuments.delete(request.url())
@@ -237,7 +245,7 @@ export class BrowserSession {
       } catch (error) {
         const reason = error instanceof Error ? error.message : 'Navigation target is not allowed.'
         if (error instanceof UrlPolicyError) {
-          this.blockedNavigation = `Navigation blocked by Phloem origin policy: ${reason}`
+          this.blockedNavigation = 'Navigation blocked by Phloem origin policy: ' + reason
         }
         await route.abort('blockedbyclient').catch(() => undefined)
       }

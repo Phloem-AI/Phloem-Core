@@ -6,7 +6,7 @@ import { createNavigationPolicy, parseWebsiteUrl, type NavigationPolicy } from '
 export const URL_PROMPT = 'Enter website URL. Make sure it is safe for public visibility and contains no confidential information.'
 
 export const BRIEF_WARNING =
-  "Ensure the website you're testing doesn't contain any malware/installable viruses and is safe for public viewing (doesn't contain any credentials). If the website requires auth, please add the demo credentials in the product brief, and clearly label them as required for auth. The product brief, including these demo credentials, will be sent to Google Gemma. Never provide production credentials, API keys, or other confidential information."
+  "Enter the website URL below. Ensure the website you're testing is safe for public visibility, doesn't exposes any confidential information, and doesn't contain any malware/installable viruses. If the website requires authentication, please add the demo credentials in the product brief, and clearly label them as required for authentication. The product brief, including these demo credentials, will be sent to Google Gemma. Never provide production credentials, API keys, or other confidential information."
 
 const LIGHT_YELLOW = '\u001b[38;5;229m'
 const WHITE = '\u001b[97m'
