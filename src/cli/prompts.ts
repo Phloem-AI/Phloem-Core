@@ -111,7 +111,7 @@ const pasteableInput = createPrompt<string, PasteablePromptConfig>((config, done
     : theme.style.message(config.message, status)
   const content = [prefix, styledMessage, displayedValue].filter(Boolean).join(' ')
   const paddedContent = config.padded ? '  ' + content + '  ' : content
-  const renderedContent = config.padded ? '\n' + paddedContent + '\n' : paddedContent
+  const renderedContent = config.padded ? '\n' + paddedContent : paddedContent
   const error = errorMessage ? theme.style.error(errorMessage) : ''
   return [renderedContent, error]
 })
