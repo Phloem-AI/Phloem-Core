@@ -70,7 +70,7 @@ const WaitForVisibleOperationSchema = z
   .object({
     type: z.literal('waitForVisible'),
     target: LocatorSchema,
-    timeoutMs: z.number().int().min(100).max(10_000).default(5_000),
+    timeoutMs: z.number().int().min(100).max(15_000).default(5_000),
   })
   .strict()
 

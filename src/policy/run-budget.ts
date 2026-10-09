@@ -8,6 +8,7 @@ export const RUN_LIMITS = {
   maxRequestsPerMinute: 10,
   maxConsecutiveGemmaFailures: 10,
   requestTimeoutMs: 150_000,
+  postOperationWaitMs: 5_000,
 } as const
 
 export class RunLimitError extends Error {
@@ -105,6 +106,16 @@ export class RunBudget {
     }
     this.objectiveCount += 1
     this.objectiveOperations = 0
+  }
+
+  async waitForNextSnapshot(signal?: AbortSignal): Promise<void> {
+    this.assertWithinTimeLimit(signal)
+    const remainingRunTime = RUN_LIMITS.maxRunDurationMs - (this.now() - this.startedAt)
+    if (RUN_LIMITS.postOperationWaitMs >= remainingRunTime) {
+      throw new RunLimitError('The required post-operation wait would exceed the one-hour run time limit.')
+    }
+    await this.sleep(RUN_LIMITS.postOperationWaitMs, signal)
+    this.assertWithinTimeLimit(signal)
   }
 
   recordBrowserOperation(): void {

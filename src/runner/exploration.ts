@@ -196,6 +196,7 @@ async function runObjective(
           active.observedSteps.push(`Operation failed: ${redactText(active.actionFailure, sensitiveValues)}`)
         }
 
+        await budget.waitForNextSnapshot(signal)
         active.snapshot = await browser.observe()
 
         if (active.actionFailure) {
