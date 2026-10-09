@@ -4,6 +4,9 @@ import { GemmaClient } from './gemma/client.js'
 import { RUN_LIMITS, RunBudget } from './policy/run-budget.js'
 import { runExploration } from './runner/exploration.js'
 
+const ORANGE = '\u001b[38;5;208m'
+const ANSI_RESET = '\u001b[0m'
+
 function printHelp(): void {
   console.log('Usage: phloem [--headless=true|false] [--update-key | --help]')
   console.log('  --headless=false  Show the Chromium browser (default: headless)')
@@ -60,17 +63,44 @@ async function main(arguments_: string[] = process.argv.slice(2)): Promise<void>
 }
 
 function printResult(result: Awaited<ReturnType<typeof runExploration>>): void {
-  console.log('\nPhloem smoke test results')
+  const lines = ['Phloem smoke test results']
   for (const [index, objective] of result.objectives.entries()) {
-    console.log(`\n${index + 1}. ${objective.name} [${objective.status}]`)
-    console.log(`   Flow: ${objective.purpose}`)
-    console.log(`   Expected: ${objective.expectedOutcome}`)
-    console.log(`   Result: ${objective.reason}`)
-    for (const evidence of objective.evidence) console.log(`   Evidence: ${evidence}`)
+    lines.push('', (index + 1) + '. ' + objective.name + ' [' + objective.status + ']')
+    lines.push('   Flow: ' + objective.purpose)
+    lines.push('   Expected: ' + objective.expectedOutcome)
+    lines.push('   Result: ' + objective.reason)
+    for (const evidence of objective.evidence) lines.push('   Evidence: ' + evidence)
   }
 
-  if (result.stopReason) console.error(`\nRun stopped: ${result.stopReason}`)
-  else console.log(`\nAll planned objectives processed (limit: ${RUN_LIMITS.maxObjectives}).`)
+  if (result.stopReason) lines.push('', 'Run stopped: ' + result.stopReason)
+  else lines.push('', 'All planned objectives processed (limit: ' + RUN_LIMITS.maxObjectives + ').')
+
+  process.stdout.write(formatReport(lines))
+}
+
+function formatReport(lines: string[]): string {
+  const terminalWidth = process.stdout.columns || 80
+  const contentWidth = Math.max(12, Math.min(88, terminalWidth - 10))
+  const wrappedLines = lines.flatMap((line) => wrapReportLine(line, contentWidth))
+  const border = '  +' + '-'.repeat(contentWidth + 4) + '+'
+  const paddedLines = wrappedLines.map((line) => '  |  ' + line.padEnd(contentWidth) + '  |')
+  return '\n' + ORANGE + [border, ...paddedLines, border].join('\n') + ANSI_RESET + '\n'
+}
+
+function wrapReportLine(line: string, width: number): string[] {
+  if (line.length === 0) return ['']
+  const wrapped: string[] = []
+  let current = ''
+  for (const word of line.split(/\s+/)) {
+    if (current.length > 0 && current.length + word.length + 1 > width) {
+      wrapped.push(current)
+      current = word
+    } else {
+      current = current.length > 0 ? current + ' ' + word : word
+    }
+  }
+  if (current.length > 0) wrapped.push(current)
+  return wrapped
 }
 
 main().catch((error: unknown) => {
