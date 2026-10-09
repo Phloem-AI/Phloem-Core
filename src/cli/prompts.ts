@@ -3,10 +3,8 @@ import clipboard from 'clipboardy'
 import { readGemmaApiKey, saveGemmaApiKey } from '../credentials/key-store.js'
 import { createNavigationPolicy, parseWebsiteUrl, type NavigationPolicy } from '../policy/url-policy.js'
 
-export const URL_PROMPT = 'Enter website URL. Make sure it is safe for public visibility and contains no confidential information.'
-
 export const BRIEF_WARNING =
-  "Enter the website URL below. Ensure the website you're testing is safe for public visibility, doesn't exposes any confidential information, and doesn't contain any malware/installable viruses. If the website requires authentication, please add the demo credentials in the product brief, and clearly label them as required for authentication. The product brief, including these demo credentials, will be sent to Google Gemma. Never provide production credentials, API keys, or other confidential information."
+  "Enter the website URL below. Ensure the website you're testing is safe for public visibility, doesn't exposes any confidential information, and doesn't contain any malware/installable viruses. Provide a product description (brief) when prompted and if the website requires authentication, please add the demo credentials in the product brief, and clearly label them as required for authentication. The product brief, including these demo credentials, will be sent to Google Gemma. Never provide production credentials, API keys, or other confidential information."
 
 const LIGHT_YELLOW = '\u001b[38;5;229m'
 const WHITE = '\u001b[97m'
