@@ -3,10 +3,33 @@ import clipboard from 'clipboardy'
 import { readGemmaApiKey, saveGemmaApiKey } from '../credentials/key-store.js'
 import { createNavigationPolicy, parseWebsiteUrl, type NavigationPolicy } from '../policy/url-policy.js'
 
-export const URL_PROMPT = 'Enter website URL. Make sure it is safe for public visibility and contains no confidential information.'
-
 export const BRIEF_WARNING =
-  "Ensure the website you're testing doesn't contain any malware/installable viruses and is safe for public viewing (doesn't contain any credentials). If the website requires auth, please add the demo credentials in the product brief, and clearly label them as required for auth. The product brief, including these demo credentials, will be sent to Google Gemma. Never provide production credentials, API keys, or other confidential information."
+  "Enter the website URL below. Ensure the website you're testing is safe for public visibility, doesn't exposes any confidential information, and doesn't contain any malware/installable viruses. Provide a product description (brief) when prompted and if the website requires authentication, please add the demo credentials in the product brief, and clearly label them as required for authentication. The product brief, including these demo credentials, will be sent to Google Gemma. Never provide production credentials, API keys, or other confidential information."
+
+const LIGHT_YELLOW = '\u001b[38;5;229m'
+const WHITE = '\u001b[97m'
+const ANSI_RESET = '\u001b[0m'
+
+function formatDisclaimer(message: string): string {
+  const terminalWidth = process.stdout.columns || 80
+  const contentWidth = Math.max(12, Math.min(88, terminalWidth - 10))
+  const lines: string[] = []
+  let currentLine = ''
+
+  for (const word of message.trim().split(/\s+/)) {
+    if (currentLine.length > 0 && currentLine.length + word.length + 1 > contentWidth) {
+      lines.push(currentLine)
+      currentLine = word
+    } else {
+      currentLine = currentLine.length > 0 ? currentLine + ' ' + word : word
+    }
+  }
+  if (currentLine.length > 0) lines.push(currentLine)
+
+  const border = '  +' + '-'.repeat(contentWidth + 4) + '+'
+  const paddedLines = lines.map((line) => '  |  ' + line.padEnd(contentWidth) + '  |')
+  return LIGHT_YELLOW + [border, ...paddedLines, border].join('\n') + ANSI_RESET + '\n\n'
+}
 
 export interface RunInputs {
   apiKey: string
@@ -27,6 +50,7 @@ export interface PromptDependencies {
 type PasteablePromptConfig = {
   message: string
   mask?: string
+  padded?: boolean
   validate?: (value: string) => true | string | Promise<true | string>
 }
 
@@ -82,9 +106,14 @@ const pasteableInput = createPrompt<string, PasteablePromptConfig>((config, done
 
   const visibleValue = config.mask ? config.mask.repeat(value.length) : value
   const displayedValue = status === 'done' ? theme.style.answer(visibleValue) : visibleValue
-  const content = [prefix, theme.style.message(config.message, status), displayedValue].filter(Boolean).join(' ')
+  const styledMessage = config.padded
+    ? WHITE + config.message + ':' + ANSI_RESET
+    : theme.style.message(config.message, status)
+  const content = [prefix, styledMessage, displayedValue].filter(Boolean).join(' ')
+  const paddedContent = config.padded ? '  ' + content + '  ' : content
+  const renderedContent = config.padded ? '\n' + paddedContent + '\n' : paddedContent
   const error = errorMessage ? theme.style.error(errorMessage) : ''
-  return [content, error]
+  return [renderedContent, error]
 })
 
 function normalizePastedText(value: string): string {
@@ -121,7 +150,8 @@ function createPromptDependencies(): PromptDependencies {
       }),
     askForUrl: () =>
       pasteableInput({
-        message: URL_PROMPT,
+        message: 'Enter URL',
+        padded: true,
         validate: (value) => {
           try {
             parseWebsiteUrl(value)
@@ -133,10 +163,11 @@ function createPromptDependencies(): PromptDependencies {
       }),
     askForBrief: () =>
       pasteableInput({
-        message: 'Enter the product brief',
+        message: 'Enter Product Definition',
+        padded: true,
         validate: validateBrief,
       }),
-    writeWarning: (message) => console.warn(message),
+    writeWarning: (message) => process.stdout.write(formatDisclaimer(message)),
   }
 }
 
@@ -145,6 +176,12 @@ export async function collectRunInputs(
   terminalCheck: () => void = requireInteractiveTerminal,
 ): Promise<RunInputs> {
   terminalCheck()
+  dependencies.writeWarning(BRIEF_WARNING)
+
+  const websiteUrl = parseWebsiteUrl(await dependencies.askForUrl())
+  const brief = await dependencies.askForBrief()
+  const briefValidation = validateBrief(brief)
+  if (briefValidation !== true) throw new Error(briefValidation)
 
   let apiKey = dependencies.readKey()
   if (!apiKey) {
@@ -152,12 +189,6 @@ export async function collectRunInputs(
     if (apiKey.length === 0) throw new Error('The Gemma API key cannot be empty.')
     dependencies.saveKey(apiKey)
   }
-
-  const websiteUrl = parseWebsiteUrl(await dependencies.askForUrl())
-  dependencies.writeWarning(BRIEF_WARNING)
-  const brief = await dependencies.askForBrief()
-  const briefValidation = validateBrief(brief)
-  if (briefValidation !== true) throw new Error(briefValidation)
 
   return {
     apiKey,
