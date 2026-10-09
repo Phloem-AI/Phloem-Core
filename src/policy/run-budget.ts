@@ -2,12 +2,13 @@ export const RUN_LIMITS = {
   maxObjectives: 15,
   maxOperationsPerObjective: 25,
   maxOperationsPerRun: 150,
-  maxRunDurationMs: 30 * 60 * 1000,
+  maxRunDurationMs: 60 * 60 * 1000,
   minRequestIntervalMs: 15_000,
   consecutiveFailureBackoffMs: 60_000,
   maxRequestsPerMinute: 10,
   maxConsecutiveGemmaFailures: 10,
   requestTimeoutMs: 150_000,
+  postOperationWaitMs: 5_000,
 } as const
 
 export class RunLimitError extends Error {
@@ -107,6 +108,16 @@ export class RunBudget {
     this.objectiveOperations = 0
   }
 
+  async waitForNextSnapshot(signal?: AbortSignal): Promise<void> {
+    this.assertWithinTimeLimit(signal)
+    const remainingRunTime = RUN_LIMITS.maxRunDurationMs - (this.now() - this.startedAt)
+    if (RUN_LIMITS.postOperationWaitMs >= remainingRunTime) {
+      throw new RunLimitError('The required post-operation wait would exceed the one-hour run time limit.')
+    }
+    await this.sleep(RUN_LIMITS.postOperationWaitMs, signal)
+    this.assertWithinTimeLimit(signal)
+  }
+
   recordBrowserOperation(): void {
     this.assertWithinTimeLimit()
     if (this.objectiveOperations >= RUN_LIMITS.maxOperationsPerObjective) {
@@ -141,7 +152,7 @@ export class RunBudget {
     const waitMs = Math.max(spacingDelay, rollingWindowDelay, providerDelay)
     const remainingRunTime = RUN_LIMITS.maxRunDurationMs - (this.now() - this.startedAt)
     if (waitMs >= remainingRunTime) {
-      throw new RunLimitError('The required Gemma retry wait would exceed the 30-minute run time limit.')
+      throw new RunLimitError('The required Gemma retry wait would exceed the one-hour run time limit.')
     }
     if (waitMs > 0) {
       await this.sleep(waitMs, signal)
@@ -187,7 +198,7 @@ export class RunBudget {
   private assertWithinTimeLimit(signal?: AbortSignal): void {
     if (signal?.aborted) throw new RunCancelledError()
     if (this.now() - this.startedAt >= RUN_LIMITS.maxRunDurationMs) {
-      throw new RunLimitError('The run reached its 30-minute time limit.')
+      throw new RunLimitError('The run reached its one-hour time limit.')
     }
   }
 }

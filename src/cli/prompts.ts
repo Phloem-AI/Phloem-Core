@@ -110,8 +110,8 @@ const pasteableInput = createPrompt<string, PasteablePromptConfig>((config, done
     ? WHITE + config.message + ':' + ANSI_RESET
     : theme.style.message(config.message, status)
   const content = [prefix, styledMessage, displayedValue].filter(Boolean).join(' ')
-  const paddedContent = config.padded ? '  ' + content + '  ' : content
-  const renderedContent = config.padded ? '\n' + paddedContent + '\n' : paddedContent
+  const paddedContent = config.padded ? '  ' + content : content
+  const renderedContent = config.padded ? '\n' + paddedContent : paddedContent
   const error = errorMessage ? theme.style.error(errorMessage) : ''
   return [renderedContent, error]
 })
@@ -144,7 +144,8 @@ function createPromptDependencies(): PromptDependencies {
     saveKey: saveGemmaApiKey,
     askForKey: () =>
       pasteableInput({
-        message: 'Enter your Google AI Studio / Gemini API key for Gemma',
+        message: 'Enter your Gemma API Key (from google ai studio)',
+        padded: true,
         mask: '*',
         validate: (value) => (value.trim().length > 0 ? true : 'The API key cannot be empty.'),
       }),

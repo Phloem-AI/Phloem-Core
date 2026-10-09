@@ -1,6 +1,6 @@
 {
   "name": "phloem",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local-first Gemma-guided web UI exploration and smoke testing",
   "main": "dist/index.js",
   "bin": {
