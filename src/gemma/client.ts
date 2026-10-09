@@ -64,6 +64,13 @@ function parseRetryAfter(value: string | null, now = Date.now()): number | undef
   return Number.isFinite(date) ? Math.max(0, date - now) : undefined
 }
 
+function describeGemmaHttpError(status: number): string {
+  if (status === 400) {
+    return 'Gemma API returned HTTP 400 (Bad Request). Check your Gemma API key; update it with "phloem --update-key" (or "npm start -- --update-key" from the repository) if needed.'
+  }
+  return 'Gemma API returned HTTP ' + status + '.'
+}
+
 function extractTextParts(payload: unknown): string[] {
   if (typeof payload !== 'object' || payload === null) {
     throw new GemmaResponseError('Gemma returned an invalid response envelope.')
@@ -264,7 +271,7 @@ export class GemmaClient {
 
         if (!response.ok) {
           throw new GemmaApiError(
-            'Gemma API returned HTTP ' + response.status + '.',
+            describeGemmaHttpError(response.status),
             response.status,
             parseRetryAfter(response.headers.get('retry-after')),
           )

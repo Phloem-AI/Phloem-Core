@@ -246,6 +246,7 @@ async function requestWithRetries<T>(request: () => Promise<T>): Promise<T> {
       return await request()
     } catch (error) {
       if (error instanceof GemmaFailureLimitError) throw error
+      if (error instanceof GemmaApiError && error.status === 400) throw error
       if (!(error instanceof GemmaApiError || error instanceof GemmaResponseError)) throw error
       consecutiveFailures += 1
       if (consecutiveFailures >= RUN_LIMITS.maxConsecutiveGemmaFailures) {
