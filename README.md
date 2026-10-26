@@ -1,6 +1,3 @@
-> [!WARNING]
-> **Disclaimer:** The software provided in this repository is for educational purposes only. Use it at your own risk. The authors are not responsible for any misuse or damage caused by this program.
-
 # Phloem
 
 Phloem is a local-first CLI for Gemma-guided **website** exploration and smoke testing. Give it a website URL and a short product brief; it derives user flows, explores them in a real browser, and reports which objectives passed or failed.
