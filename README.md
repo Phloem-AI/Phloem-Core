@@ -2,6 +2,8 @@
 
 Phloem is a local-first CLI for Gemma-guided **website** exploration and smoke testing. Give it a website URL and a short product brief; it derives user flows, explores them in a real browser, and reports which objectives passed or failed.
 
+**Note:** We're pivoting to a new proposed solution. It aims to be inherently better than the current version of Phloem.
+
 ## What It Does
 
 - Turns a product brief and an initial page snapshot into a bounded list of user-flow objectives.
