@@ -385,6 +385,10 @@ export async function runMcpServer(): Promise<void> {
     await server.close().catch((error: unknown) => {
       process.stderr.write(`Phloem MCP shutdown failed: ${errorMessage(error)}\n`)
     })
+    process.removeListener('SIGINT', onSigint)
+    process.removeListener('SIGTERM', onSigterm)
+    process.stdin.removeListener('end', onStdinEnd)
+    process.stdin.removeListener('close', onStdinEnd)
   }
   const onSigint = () => void shutdown('SIGINT')
   const onSigterm = () => void shutdown('SIGTERM')
@@ -393,13 +397,6 @@ export async function runMcpServer(): Promise<void> {
   process.once('SIGTERM', onSigterm)
   process.stdin.once('end', onStdinEnd)
   process.stdin.once('close', onStdinEnd)
-  try {
-    await server.connect(transport)
-    process.stderr.write('Phloem stdio MCP server ready.\n')
-  } finally {
-    process.removeListener('SIGINT', onSigint)
-    process.removeListener('SIGTERM', onSigterm)
-    process.stdin.removeListener('end', onStdinEnd)
-    process.stdin.removeListener('close', onStdinEnd)
-  }
+  await server.connect(transport)
+  process.stderr.write('Phloem stdio MCP server ready.\n')
 }
