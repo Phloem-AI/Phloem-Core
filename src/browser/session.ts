@@ -1,4 +1,5 @@
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright'
+import { devices } from '@playwright/test'
 import type { BrowserOperation, Locator } from '../contracts.js'
 import { RunBudget } from '../policy/run-budget.js'
 import { resolveAllowedNavigation, UrlPolicyError, type NavigationPolicy } from '../policy/url-policy.js'
@@ -83,12 +84,12 @@ export class BrowserSession {
     let browser: Browser | undefined
     try {
       browser = await chromium.launch({ headless: options.headless ?? true, chromiumSandbox: true })
-      const device = options.deviceName ? chromium.devices[options.deviceName] : undefined
+      const device = options.deviceName ? devices[options.deviceName] : undefined
       if (options.deviceName && !device) throw new Error(`Unknown Playwright device descriptor: ${options.deviceName}`)
       const context = await browser.newContext({
         acceptDownloads: false,
         ...(device ? { ...device } : {}),
-        ...(options.viewport ? { viewport: options.viewport } : {}),
+        ...(options.viewport !== undefined ? { viewport: options.viewport } : {}),
         ...(options.storageStatePath ? { storageState: options.storageStatePath } : {}),
       })
       const page = await context.newPage()

@@ -116,11 +116,12 @@ export class FactStore {
 
 export function attachPageTaps(page: Page, facts: FactStore, onDialogDismissed?: () => void): void {
   page.on('console', (message) => {
-    if (message.type() !== 'error' && message.type() !== 'warning') return
+    const level = message.type()
+    if (level !== 'error' && level !== 'warning') return
     facts.append({
       kind: 'console',
       ts: new Date().toISOString(),
-      level: message.type(),
+      level,
       text: message.text(),
     })
   })
