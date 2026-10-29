@@ -36,6 +36,8 @@ function requestUrl(request: Request): string {
 
 export class FactStore {
   private readonly records: BrowserFact[] = []
+  private readonly sequences: number[] = []
+  private totalAppended = 0
   private readonly dropped: FactCounts = {
     console: 0,
     pageerror: 0,
@@ -48,14 +50,19 @@ export class FactStore {
   constructor(private readonly secrets: () => readonly string[]) {}
 
   append(fact: BrowserFact): void {
+    this.totalAppended += 1
     const limit = FACT_LIMITS[fact.kind]
     const kindCount = this.records.reduce((count, item) => count + Number(item.kind === fact.kind), 0)
     if (kindCount >= limit) {
       const oldestIndex = this.records.findIndex((item) => item.kind === fact.kind)
-      if (oldestIndex >= 0) this.records.splice(oldestIndex, 1)
+      if (oldestIndex >= 0) {
+        this.records.splice(oldestIndex, 1)
+        this.sequences.splice(oldestIndex, 1)
+      }
       this.dropped[fact.kind] += 1
     }
     this.records.push(this.redactFact(fact))
+    this.sequences.push(this.totalAppended)
   }
 
   all(): readonly BrowserFact[] {
@@ -63,11 +70,15 @@ export class FactStore {
   }
 
   since(index: number): readonly BrowserFact[] {
-    return this.records.slice(index)
+    return this.records.filter((_fact, recordIndex) => this.sequences[recordIndex]! > index)
   }
 
   get length(): number {
-    return this.records.length
+    return this.totalAppended
+  }
+
+  redact(value: string): string {
+    return redactText(value, this.secrets())
   }
 
   droppedCounts(): FactCounts {
@@ -84,7 +95,7 @@ export class FactStore {
       lifecycle: 0,
     }
     for (const fact of facts) counts[fact.kind] += 1
-    return { counts, exemplars: facts.slice(0, 8).map((fact) => ({ ...fact })), dropped: this.droppedCounts() }
+    return { counts, exemplars: facts.slice(0, 4).map((fact) => ({ ...fact })), dropped: this.droppedCounts() }
   }
 
   private redactFact(fact: BrowserFact): BrowserFact {

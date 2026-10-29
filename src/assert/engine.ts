@@ -46,7 +46,7 @@ export async function evaluateAssertion(assertion: Assertion, context: Assertion
       }
       default:
         if (!context.page) return failed(undefined, 'This assertion requires an active browser page.')
-        return evaluatePageAssertion(assertion, context.page)
+        return evaluatePageAssertion(assertion, context.page, context.facts)
     }
   } catch (error) {
     return failed(
@@ -64,6 +64,7 @@ function countResult(actual: number, max: number, label: string): AssertionResul
 async function evaluatePageAssertion(
   assertion: Exclude<Assertion, { type: 'httpStatus' | 'consoleErrorCount' | 'pageErrorCount' }>,
   page: Page,
+  facts: FactStore,
 ): Promise<AssertionResult> {
   const timeoutMs = assertion.timeoutMs
   const deadline = Date.now() + timeoutMs
@@ -71,9 +72,10 @@ async function evaluatePageAssertion(
   while (true) {
     actual = await readPageAssertion(assertion, page)
     const pass = checkPageAssertion(assertion, actual)
-    if (pass) return { pass: true, actual, detail: `Assertion "${assertion.type}" matched.` }
+    const safeActual = typeof actual === 'string' ? facts.redact(actual) : actual
+    if (pass) return { pass: true, actual: safeActual, detail: `Assertion "${assertion.type}" matched.` }
     if (Date.now() >= deadline) {
-      return { pass: false, actual, detail: `Assertion "${assertion.type}" did not match within ${timeoutMs}ms.` }
+      return { pass: false, actual: safeActual, detail: `Assertion "${assertion.type}" did not match within ${timeoutMs}ms.` }
     }
     await new Promise((resolve) => setTimeout(resolve, Math.min(100, Math.max(1, deadline - Date.now()))))
   }
@@ -85,7 +87,7 @@ async function readPageAssertion(
 ): Promise<unknown> {
   switch (assertion.type) {
     case 'urlMatches':
-      return page.url()
+      return safeUrl(page.url())
     case 'titleIncludes':
       return page.title()
     case 'elementVisible':
@@ -96,13 +98,23 @@ async function readPageAssertion(
       return page.locator('body').innerText().then((text) => text.includes(assertion.text)).catch(() => false)
     case 'elementState': {
       const target = locator(page, assertion.target)
+      if (await target.count() === 0) return null
       if (assertion.state === 'checked' || assertion.state === 'unchecked') {
-        const checked = await target.isChecked().catch(() => false)
+        const checked = await target.isChecked()
         return assertion.state === 'checked' ? checked : !checked
       }
-      const disabled = await target.isDisabled().catch(() => false)
+      const disabled = await target.isDisabled()
       return assertion.state === 'disabled' ? disabled : !disabled
     }
+  }
+}
+
+function safeUrl(value: string): string {
+  try {
+    const url = new URL(value)
+    return `${url.origin}${url.pathname}`.slice(0, 2048)
+  } catch {
+    return 'about:blank'
   }
 }
 

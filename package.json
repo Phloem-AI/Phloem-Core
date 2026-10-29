@@ -1,11 +1,8 @@
 {
   "name": "phloem",
   "version": "0.1.1",
-  "description": "Local-first Gemma-guided web UI exploration and smoke testing",
+  "description": "A stdio MCP server that gives coding agents measured Playwright browser tools",
   "main": "dist/index.js",
-  "bin": {
-    "phloem": "dist/index.js"
-  },
   "engines": {
     "node": ">=20.17"
   },
@@ -21,22 +18,14 @@
     "type": "git",
     "url": "git+https://github.com/Phloem-AI/Phloem-Core.git"
   },
-  "keywords": [
-    "harness",
-    "cli",
-    "software-testing"
-  ],
+  "keywords": ["mcp", "playwright", "browser-testing"],
   "author": "Qasim-Hassan",
   "license": "Apache-2.0",
   "dependencies": {
-    "@inquirer/core": "^12.0.4",
-    "@inquirer/prompts": "^8.0.0",
     "@modelcontextprotocol/sdk": "^1.32.2",
-    "@napi-rs/keyring": "^2.1.0",
     "@playwright/test": "^1.64.1",
     "axe-core": "^4.14.0",
-    "clipboardy": "^5.3.2",
-    "playwright": "^1.63.0",
+    "playwright": "^1.64.1",
     "zod": "^4.0.0"
   },
   "devDependencies": {

@@ -1,7 +1,6 @@
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright'
 import { devices } from '@playwright/test'
 import type { BrowserOperation, Locator } from '../contracts.js'
-import { RunBudget } from '../policy/run-budget.js'
 import { resolveAllowedNavigation, UrlPolicyError, type NavigationPolicy } from '../policy/url-policy.js'
 import { redactText } from '../security/redaction.js'
 import { attachPageTaps, FactStore } from '../instrument/taps.js'
@@ -25,7 +24,6 @@ export class BrowserRuntimeError extends Error {
 export interface BrowserSessionOptions {
   startUrl: URL
   navigationPolicy: NavigationPolicy
-  budget?: RunBudget
   headless?: boolean
   signal?: AbortSignal
   sensitiveValues?: readonly string[]
@@ -45,7 +43,6 @@ export class BrowserSession {
   private readonly context: BrowserContext
   private readonly page: Page
   private readonly navigationPolicy: NavigationPolicy
-  private readonly budget: RunBudget | undefined
   private readonly signal: AbortSignal | undefined
   private readonly knownSensitiveValues = new Set<string>()
   private readonly factStore: FactStore
@@ -68,7 +65,6 @@ export class BrowserSession {
     this.context = context
     this.page = page
     this.navigationPolicy = options.navigationPolicy
-    this.budget = options.budget
     this.signal = options.signal
     for (const value of options.sensitiveValues ?? []) this.knownSensitiveValues.add(value)
     this.factStore = new FactStore(() => [...this.knownSensitiveValues])
@@ -121,7 +117,6 @@ export class BrowserSession {
 
   async observe(): Promise<string> {
     this.assertUsable()
-    this.budget?.recordBrowserOperation()
 
     try {
       const [title, ariaTree, visibleText] = await Promise.all([
@@ -145,12 +140,33 @@ export class BrowserSession {
         truncated: {
           accessibleSnapshot: ariaTree.length > safeAriaTree.length,
           visibleText: visibleText.length > safeText.length,
+          total: false,
         },
       }
       this.lastAriaSnapshot = safeAriaTree
       this.lastVisibleText = safeText
       this.lastObservedFactIndex = this.factStore.length
-      return JSON.stringify(payload).slice(0, MAX_SNAPSHOT_LENGTH)
+      let serialized = JSON.stringify(payload)
+      if (serialized.length > MAX_SNAPSHOT_LENGTH) {
+        payload.accessibleSnapshot = payload.accessibleSnapshot.slice(0, 12_000)
+        payload.accessibleSnapshotDelta = payload.accessibleSnapshotDelta.slice(0, 2_000)
+        payload.visibleText = payload.visibleText.slice(0, 3_000)
+        payload.visibleTextDelta = payload.visibleTextDelta.slice(0, 1_000)
+        payload.facts.exemplars = payload.facts.exemplars.slice(0, 2)
+        payload.truncated.total = true
+        payload.truncated.accessibleSnapshot = true
+        payload.truncated.visibleText = true
+        serialized = JSON.stringify(payload)
+      }
+      if (serialized.length > MAX_SNAPSHOT_LENGTH) {
+        payload.accessibleSnapshot = payload.accessibleSnapshot.slice(0, 8_000)
+        payload.accessibleSnapshotDelta = ''
+        payload.visibleText = payload.visibleText.slice(0, 1_000)
+        payload.visibleTextDelta = ''
+        payload.facts.exemplars = []
+        serialized = JSON.stringify(payload)
+      }
+      return serialized
     } catch (error) {
       if (!this.browser.isConnected() || this.page.isClosed()) {
         throw new BrowserRuntimeError('Chromium exited while capturing the page snapshot.', { cause: error })
@@ -161,7 +177,6 @@ export class BrowserSession {
 
   async execute(operation: BrowserOperation): Promise<string> {
     this.assertUsable()
-    this.budget?.recordBrowserOperation()
     this.blockedNavigation = undefined
     this.redirectedDocumentUrl = undefined
     let operationDescription: string | undefined
@@ -222,7 +237,6 @@ export class BrowserSession {
 
   async captureTemporaryScreenshot(): Promise<Buffer | undefined> {
     if (this.closed || this.page.isClosed() || !this.browser.isConnected()) return undefined
-    this.budget?.recordBrowserOperation()
     try {
       return await this.page.screenshot({ type: 'png', fullPage: false, timeout: 5_000 })
     } catch {
@@ -365,7 +379,6 @@ export class BrowserSession {
       const destination = this.redirectedDocumentUrl
       this.redirectedDocumentUrl = undefined
       if (destination === this.page.url()) return
-      this.budget?.recordBrowserOperation()
       await this.page.goto(destination, { waitUntil: 'domcontentloaded', timeout: 15_000 })
       if (this.blockedNavigation) return
     }

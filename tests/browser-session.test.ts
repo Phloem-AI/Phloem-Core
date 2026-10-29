@@ -3,7 +3,6 @@ import { createServer, type Server } from 'node:http'
 import { once } from 'node:events'
 import test from 'node:test'
 import { BrowserOperationError, BrowserSession } from '../src/browser/session.js'
-import { RunBudget } from '../src/policy/run-budget.js'
 import { createNavigationPolicy, parseWebsiteUrl } from '../src/policy/url-policy.js'
 
 async function listen(server: Server): Promise<string> {
@@ -34,7 +33,6 @@ test('Chromium snapshots accessible UI, redacts sensitive fields, and executes a
   const session = await BrowserSession.open({
     startUrl: websiteUrl,
     navigationPolicy: createNavigationPolicy(websiteUrl, ''),
-    budget: new RunBudget(),
     sensitiveValues: ['demo-pass'],
   })
 
@@ -78,7 +76,6 @@ test('Chromium blocks navigation to an origin not named in the brief', async (co
   const session = await BrowserSession.open({
     startUrl: websiteUrl,
     navigationPolicy: createNavigationPolicy(websiteUrl, ''),
-    budget: new RunBudget(),
   })
 
   try {
@@ -93,7 +90,6 @@ test('Chromium blocks navigation to an origin not named in the brief', async (co
   const allowedSession = await BrowserSession.open({
     startUrl: websiteUrl,
     navigationPolicy: createNavigationPolicy(websiteUrl, allowedBrief),
-    budget: new RunBudget(),
   })
   try {
     await allowedSession.execute({ type: 'navigate', url: '/allowed-redirect' })
