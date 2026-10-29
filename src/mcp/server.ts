@@ -155,8 +155,10 @@ server.registerTool('browser_act', {
       type: 'text',
       text: JSON.stringify({
         ok: false,
+        sessionId,
         reason: errorMessage(error),
         policyBlocked: error instanceof BrowserOperationError && /origin policy|Navigation target|subdomains/i.test(error.message),
+        suggestion: 'Inspect the current page and allowed origins, then choose a supported browser operation.',
         facts: managed.browser.facts.digest(managed.browser.facts.since(factOffset)),
       }),
     }]

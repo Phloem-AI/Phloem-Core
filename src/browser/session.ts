@@ -71,6 +71,9 @@ export class BrowserSession {
     attachPageTaps(page, this.factStore, () => {
       this.lastActionStatus = { ok: false, detail: 'A browser dialog was dismissed.' }
     })
+    browser.on('disconnected', () =>
+      this.factStore.append({ kind: 'lifecycle', ts: new Date().toISOString(), event: 'browser-disconnected' }),
+    )
     context.on('close', () =>
       this.factStore.append({ kind: 'lifecycle', ts: new Date().toISOString(), event: 'context-close' }),
     )
