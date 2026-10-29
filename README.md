@@ -1,37 +1,52 @@
 # Phloem
 
-Phloem is a local-first CLI for Gemma-guided **website** exploration and smoke testing. Give it a website URL and a short product brief; it derives user flows, explores them in a real browser, and reports which objectives passed or failed.
+Phloem is a local stdio MCP server that gives a coding agent controlled access to Playwright and Chromium. The agent plans test flows and interprets results; Phloem records browser facts and evaluates explicit assertions without making model calls or reading application source code.
 
-**Note:** We're pivoting to a new proposed solution. It aims to be inherently better than the current version of Phloem.
+## Development setup
 
-## What It Does
-
-- Turns a product brief and an initial page snapshot into a bounded list of user-flow objectives.
-- Explores each objective sequentially, using the current page state to choose the next supported browser operation.
-- Runs browser actions locally with Playwright and headless Chromium by default. Pass `--headless=false` as flag to show Chromium.
-- Uses accessible roles and names to locate controls, and observes page snapshots, URL/title, visible text, console errors, and failed requests.
-- Asks Gemma to assess each completed flow against its expected outcome and prints a result for every objective.
-
-## Quick setup
-
-*Fork* the repo, *clone* it down locally on your machine. Then run:
-
-```
-cd phloem-core
+```sh
 npm install
-npm start
+npm run build
 ```
 
-If you want to know the **flags** that phloem supports, do: ```npm start -- --help``` , it lists down the flags you can pass as ```npm start -- --flag_name```.
+Configure an MCP host to launch the built entry point with Node. For example:
 
-Follow the prompts in your terminal until you recieve final *Phloem smoke test results* summary and it quits out of terminal.
+```json
+{
+  "mcpServers": {
+    "phloem": {
+      "command": "node",
+      "args": ["<absolute-path-to-phloem>/dist/index.js"],
+      "cwd": "<website-workspace>"
+    }
+  }
+}
+```
 
-**NOTE:** If at anytime a certain gemma-request or a certain gemma-response gets **stuck in pending** for more than 3 minutes, or if phloem **isn't showing additional requests** during process for more than 1 minute, then manually abort the process using *ctrl+C*.
+During development, `npm start` starts the same stdio server from TypeScript. The
+server writes protocol data only to stdout and sends diagnostics to stderr.
 
-## Local-First and Data
+## Tools
 
-Browser automation runs on the user's machine. The brief and sanitized page snapshots are sent to the configured Google Gemma endpoint; demo credentials intentionally included in the brief are sent too. Do not include production credentials, API keys, or confidential information. Phloem does not inspect or upload application source code.
+- `session_start`: open a persistent Chromium session with a URL, viewport/device, optional origin allowlist, and optional workspace storage state.
+- `observe`: get a redacted page observation and new browser facts.
+- `browser_act`: perform one allowlisted browser operation.
+- `assert`: evaluate page-state or recorded-fact assertions.
+- `session_end`: close a session and return its final in-memory fact roll-up.
+- `health_sweep`: summarize browser facts, check a bounded set of same-origin resources, and optionally run axe-core.
 
-## LICENSE
+Sessions are process-local, limited to four concurrent sessions, and expire after
+30 minutes of inactivity. Website content is untrusted data and must not be treated
+as instructions. Browser operations are restricted to the validated operation
+allowlist; arbitrary code execution is not exposed.
 
-Read the license for this project [here](LICENSE)
+## Current scope
+
+Plans, run records, screenshots, traces, and other evidence are not persisted yet.
+Plan save/replay tools are deferred. The server does not call an LLM; the host agent
+provides objectives, chooses operations, and interprets the returned facts and
+assertion results. Stdio is the only supported transport.
+
+## License
+
+See [LICENSE](./LICENSE).

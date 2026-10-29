@@ -1,11 +1,11 @@
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright'
+import { devices } from '@playwright/test'
 import type { BrowserOperation, Locator } from '../contracts.js'
-import { RunBudget } from '../policy/run-budget.js'
 import { resolveAllowedNavigation, UrlPolicyError, type NavigationPolicy } from '../policy/url-policy.js'
 import { redactText } from '../security/redaction.js'
+import { attachPageTaps, FactStore } from '../instrument/taps.js'
 
 const MAX_SNAPSHOT_LENGTH = 30_000
-const MAX_DIAGNOSTICS = 10
 
 export class BrowserOperationError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -24,10 +24,12 @@ export class BrowserRuntimeError extends Error {
 export interface BrowserSessionOptions {
   startUrl: URL
   navigationPolicy: NavigationPolicy
-  budget: RunBudget
   headless?: boolean
   signal?: AbortSignal
   sensitiveValues?: readonly string[]
+  viewport?: { width: number; height: number } | null
+  deviceName?: string | null
+  storageStatePath?: string
 }
 
 type CachedDocumentResponse = {
@@ -41,12 +43,14 @@ export class BrowserSession {
   private readonly context: BrowserContext
   private readonly page: Page
   private readonly navigationPolicy: NavigationPolicy
-  private readonly budget: RunBudget
   private readonly signal: AbortSignal | undefined
-  private readonly consoleErrors: string[] = []
-  private readonly failedRequests: string[] = []
   private readonly knownSensitiveValues = new Set<string>()
+  private readonly factStore: FactStore
   private readonly prefetchedDocuments = new Map<string, CachedDocumentResponse>()
+  private lastAriaSnapshot = ''
+  private lastVisibleText = ''
+  private lastObservedFactIndex = 0
+  private lastActionStatus: { ok: boolean; detail: string } | undefined
   private blockedNavigation: string | undefined
   private redirectedDocumentUrl: string | undefined
   private closed = false
@@ -61,17 +65,30 @@ export class BrowserSession {
     this.context = context
     this.page = page
     this.navigationPolicy = options.navigationPolicy
-    this.budget = options.budget
     this.signal = options.signal
     for (const value of options.sensitiveValues ?? []) this.knownSensitiveValues.add(value)
-    this.attachDiagnostics()
+    this.factStore = new FactStore(() => [...this.knownSensitiveValues])
+    attachPageTaps(page, this.factStore, () => {
+      this.lastActionStatus = { ok: false, detail: 'A browser dialog was dismissed.' }
+    })
+    context.on('close', () =>
+      this.factStore.append({ kind: 'lifecycle', ts: new Date().toISOString(), event: 'context-close' }),
+    )
   }
 
   static async open(options: BrowserSessionOptions): Promise<BrowserSession> {
     let browser: Browser | undefined
     try {
       browser = await chromium.launch({ headless: options.headless ?? true, chromiumSandbox: true })
-      const context = await browser.newContext({ acceptDownloads: false })
+      const device = options.deviceName ? devices[options.deviceName] : undefined
+      if (options.deviceName && !device) throw new Error(`Unknown Playwright device descriptor: ${options.deviceName}`)
+      const { defaultBrowserType: _defaultBrowserType, ...deviceOptions } = device ?? {}
+      const context = await browser.newContext({
+        acceptDownloads: false,
+        ...deviceOptions,
+        ...(options.viewport !== undefined ? { viewport: options.viewport } : {}),
+        ...(options.storageStatePath ? { storageState: options.storageStatePath } : {}),
+      })
       const page = await context.newPage()
       page.setDefaultTimeout(5_000)
       page.setDefaultNavigationTimeout(15_000)
@@ -90,9 +107,17 @@ export class BrowserSession {
     return this.page.url()
   }
 
+  get facts(): FactStore {
+    return this.factStore
+  }
+
+  get assertionPage(): Page {
+    this.assertUsable()
+    return this.page
+  }
+
   async observe(): Promise<string> {
     this.assertUsable()
-    this.budget.recordBrowserOperation()
 
     try {
       const [title, ariaTree, visibleText] = await Promise.all([
@@ -100,17 +125,49 @@ export class BrowserSession {
         this.page.locator('body').ariaSnapshot({ timeout: 5_000 }).catch(() => ''),
         this.page.locator('body').innerText({ timeout: 5_000 }).catch(() => ''),
       ])
-      const safeAriaTree = this.redactInputValues(ariaTree)
+      const safeAriaTree = this.redactInputValues(ariaTree).slice(0, 18_000)
       const safeText = this.redactKnownValues(visibleText).slice(0, 8_000)
+      const newFacts = this.factStore.since(this.lastObservedFactIndex)
+      const factDigest = this.factStore.digest(newFacts)
       const payload = {
-        url: safePageUrl(this.page.url()),
+        url: this.redactKnownValues(safePageUrl(this.page.url())),
         title: this.redactKnownValues(title).slice(0, 300),
         accessibleSnapshot: safeAriaTree.slice(0, 18_000),
+        accessibleSnapshotDelta: snapshotDelta(this.lastAriaSnapshot, safeAriaTree),
         visibleText: safeText,
-        consoleErrors: this.consoleErrors.slice(-MAX_DIAGNOSTICS),
-        failedRequests: this.failedRequests.slice(-MAX_DIAGNOSTICS),
+        visibleTextDelta: textDelta(this.lastVisibleText, safeText),
+        actionStatus: this.lastActionStatus,
+        facts: factDigest,
+        truncated: {
+          accessibleSnapshot: ariaTree.length > safeAriaTree.length,
+          visibleText: visibleText.length > safeText.length,
+          total: false,
+        },
       }
-      return JSON.stringify(payload).slice(0, MAX_SNAPSHOT_LENGTH)
+      this.lastAriaSnapshot = safeAriaTree
+      this.lastVisibleText = safeText
+      this.lastObservedFactIndex = this.factStore.length
+      let serialized = JSON.stringify(payload)
+      if (serialized.length > MAX_SNAPSHOT_LENGTH) {
+        payload.accessibleSnapshot = payload.accessibleSnapshot.slice(0, 12_000)
+        payload.accessibleSnapshotDelta = payload.accessibleSnapshotDelta.slice(0, 2_000)
+        payload.visibleText = payload.visibleText.slice(0, 3_000)
+        payload.visibleTextDelta = payload.visibleTextDelta.slice(0, 1_000)
+        payload.facts.exemplars = payload.facts.exemplars.slice(0, 2)
+        payload.truncated.total = true
+        payload.truncated.accessibleSnapshot = true
+        payload.truncated.visibleText = true
+        serialized = JSON.stringify(payload)
+      }
+      if (serialized.length > MAX_SNAPSHOT_LENGTH) {
+        payload.accessibleSnapshot = payload.accessibleSnapshot.slice(0, 8_000)
+        payload.accessibleSnapshotDelta = ''
+        payload.visibleText = payload.visibleText.slice(0, 1_000)
+        payload.visibleTextDelta = ''
+        payload.facts.exemplars = []
+        serialized = JSON.stringify(payload)
+      }
+      return serialized
     } catch (error) {
       if (!this.browser.isConnected() || this.page.isClosed()) {
         throw new BrowserRuntimeError('Chromium exited while capturing the page snapshot.', { cause: error })
@@ -121,7 +178,6 @@ export class BrowserSession {
 
   async execute(operation: BrowserOperation): Promise<string> {
     this.assertUsable()
-    this.budget.recordBrowserOperation()
     this.blockedNavigation = undefined
     this.redirectedDocumentUrl = undefined
     let operationDescription: string | undefined
@@ -165,8 +221,11 @@ export class BrowserSession {
       if (this.blockedNavigation) throw new BrowserOperationError(this.blockedNavigation)
       await this.completeAllowedRedirects()
       if (this.blockedNavigation) throw new BrowserOperationError(this.blockedNavigation)
-      return operationDescription ?? describeOperation(operation)
+      const detail = this.redactKnownValues(operationDescription ?? describeOperation(operation))
+      this.lastActionStatus = { ok: true, detail }
+      return detail
     } catch (error) {
+      this.lastActionStatus = { ok: false, detail: error instanceof Error ? error.message : 'Browser action failed.' }
       if (error instanceof BrowserOperationError) throw error
       if (!this.browser.isConnected() || this.page.isClosed()) {
         throw new BrowserRuntimeError('Chromium exited while executing a browser operation.', { cause: error })
@@ -179,7 +238,6 @@ export class BrowserSession {
 
   async captureTemporaryScreenshot(): Promise<Buffer | undefined> {
     if (this.closed || this.page.isClosed() || !this.browser.isConnected()) return undefined
-    this.budget.recordBrowserOperation()
     try {
       return await this.page.screenshot({ type: 'png', fullPage: false, timeout: 5_000 })
     } catch {
@@ -190,8 +248,19 @@ export class BrowserSession {
   async close(): Promise<void> {
     if (this.closed) return
     this.closed = true
-    await this.context.close().catch(() => undefined)
-    await this.browser.close().catch(() => undefined)
+    let closeError: unknown
+    try {
+      await this.context.close()
+    } catch (error) {
+      closeError = error
+    } finally {
+      await this.browser.close().catch((error: unknown) => {
+        if (closeError === undefined) closeError = error
+      })
+    }
+    if (closeError !== undefined) {
+      throw new BrowserRuntimeError('Could not close the Chromium session cleanly.', { cause: closeError })
+    }
   }
 
   private target(locator: Locator) {
@@ -203,15 +272,6 @@ export class BrowserSession {
     if (this.closed || this.page.isClosed() || !this.browser.isConnected()) {
       throw new BrowserRuntimeError('The Chromium session is no longer available.')
     }
-  }
-
-  private attachDiagnostics(): void {
-    this.page.on('console', (message) => {
-      if (message.type() === 'error') this.pushBounded(this.consoleErrors, this.redactKnownValues(message.text()))
-    })
-    this.page.on('requestfailed', (request) => {
-      this.pushBounded(this.failedRequests, `${request.method()} ${safePageUrl(request.url())}`)
-    })
   }
 
   private async installNavigationGuard(): Promise<void> {
@@ -320,7 +380,6 @@ export class BrowserSession {
       const destination = this.redirectedDocumentUrl
       this.redirectedDocumentUrl = undefined
       if (destination === this.page.url()) return
-      this.budget.recordBrowserOperation()
       await this.page.goto(destination, { waitUntil: 'domcontentloaded', timeout: 15_000 })
       if (this.blockedNavigation) return
     }
@@ -342,10 +401,6 @@ export class BrowserSession {
     return redactText(value, [...this.knownSensitiveValues])
   }
 
-  private pushBounded(target: string[], value: string): void {
-    target.push(value.slice(0, 500))
-    if (target.length > MAX_DIAGNOSTICS) target.shift()
-  }
 }
 
 function safePageUrl(value: string): string {
@@ -355,6 +410,19 @@ function safePageUrl(value: string): string {
   } catch {
     return 'about:blank'
   }
+}
+
+function snapshotDelta(previous: string, current: string): string {
+  const previousLines = new Set(previous.split('\n'))
+  const currentLines = current.split('\n')
+  const added = currentLines.filter((line) => !previousLines.has(line))
+  const removed = previous.split('\n').filter((line) => line.length > 0 && !currentLines.includes(line))
+  return JSON.stringify({ added: added.slice(0, 100), removed: removed.slice(0, 100) }).slice(0, 18_000)
+}
+
+function textDelta(previous: string, current: string): string {
+  const previousLines = new Set(previous.split('\n'))
+  return current.split('\n').filter((line) => !previousLines.has(line)).join('\n').slice(0, 8_000)
 }
 
 function isSensitiveLocator(name: string): boolean {

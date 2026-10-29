@@ -1,26 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {
-  BrowserOperationSchema,
-  FlowStepResponseSchema,
-  ObjectivePlanSchema,
-  ObjectiveVerdictSchema,
-} from '../src/contracts.js'
+import { AssertionSchema, BrowserOperationSchema, TestPlanSchema, VerdictSchema } from '../src/contracts.js'
 
-test('objective plans accept valid objectives and reject more than 15', () => {
-  const objective = {
-    id: 'sign-in',
-    name: 'Sign in',
-    purpose: 'Exercise the sign-in flow',
-    expectedOutcome: 'The dashboard is shown',
-    successCriteria: ['A Dashboard heading is visible'],
-  }
-  assert.equal(ObjectivePlanSchema.parse({ schemaVersion: '1', objectives: [objective] }).objectives.length, 1)
-  assert.equal(ObjectivePlanSchema.safeParse({ schemaVersion: '1', objectives: Array(16).fill(objective) }).success, false)
-  assert.equal(ObjectivePlanSchema.safeParse({ schemaVersion: '1', objectives: [objective, objective] }).success, false)
-})
-
-test('browser operation schemas reject unknown operations and arbitrary extra fields', () => {
+test('browser operations retain the allowlist and reject executable or extra fields', () => {
   assert.equal(
     BrowserOperationSchema.safeParse({ type: 'click', target: { role: 'button', name: 'Continue' } }).success,
     true,
@@ -36,15 +18,21 @@ test('browser operation schemas reject unknown operations and arbitrary extra fi
   )
 })
 
-test('flow completion and verdict responses are strict and versioned', () => {
-  assert.equal(FlowStepResponseSchema.safeParse({ schemaVersion: '1', kind: 'complete', summary: 'Done' }).success, true)
-  assert.equal(FlowStepResponseSchema.safeParse({ schemaVersion: '2', kind: 'complete', summary: 'Done' }).success, false)
-  assert.equal(
-    ObjectiveVerdictSchema.safeParse({ schemaVersion: '1', status: 'passed', reason: 'Shown', evidence: [] }).success,
-    true,
-  )
-  assert.equal(
-    ObjectiveVerdictSchema.safeParse({ schemaVersion: '1', status: 'blocked', reason: 'Auth', evidence: [] }).success,
-    false,
-  )
+test('assertion and plan schemas reject unknown types and malformed plans', () => {
+  assert.equal(AssertionSchema.safeParse({ type: 'pageErrorCount', max: 0 }).success, true)
+  assert.equal(AssertionSchema.safeParse({ type: 'evaluate', expression: '1 + 1' }).success, false)
+  const plan = {
+    schemaVersion: '2',
+    name: 'Sign in',
+    source: 'agent session',
+    flows: [{
+      id: 'sign-in',
+      preconditions: [],
+      steps: [{ purpose: 'Open the login form', op: { type: 'click', target: { role: 'button', name: 'Sign in' } }, expect: [] }],
+    }],
+    globalAssertions: [],
+  }
+  assert.equal(TestPlanSchema.safeParse(plan).success, true)
+  assert.equal(TestPlanSchema.safeParse({ ...plan, schemaVersion: '1' }).success, false)
+  assert.equal(VerdictSchema.safeParse('agent_passed').success, false)
 })
