@@ -162,7 +162,7 @@ function appendFailedRequest(request: Request, facts: FactStore): void {
 
 function appendResponse(response: Response, facts: FactStore): void {
   const request = response.request()
-  const timing = response.timing()
+  const timing = request.timing()
   const contentLength = Number(response.headers()['content-length'])
   facts.append({
     kind: 'http',

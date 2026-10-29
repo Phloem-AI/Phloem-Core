@@ -6,9 +6,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { evaluateAssertions } from '../assert/engine.js'
-import { BrowserOperationSchema, AssertionSchema, type Assertion } from '../contracts.js'
+import { BrowserOperationSchema, AssertionSchema } from '../contracts.js'
 import { BrowserSession, BrowserOperationError } from '../browser/session.js'
-import { FactStore } from '../instrument/taps.js'
 import { createNavigationPolicy, parseWebsiteUrl } from '../policy/url-policy.js'
 
 const MAX_SESSIONS = 4
@@ -104,69 +103,47 @@ const server = new McpServer(
   },
 )
 
-function registerSafeTool<Args extends z.ZodRawShape>(
-  name: string,
-  description: string,
-  schema: Args,
-  handler: (args: z.infer<z.ZodObject<Args>>) => Promise<CallToolResult>,
-): void {
-  server.registerTool(
-    name,
-    { description, inputSchema: schema },
-    async (args) => {
-      try {
-        return await handler(args)
-      } catch (error) {
-        const message = errorMessage(error)
-        process.stderr.write(`[Phloem ${name}] ${message}\n`)
-        return {
-          isError: true,
-          content: [{ type: 'text', text: JSON.stringify({
-            error: true,
-            reason: message,
-            ...(typeof args === 'object' && args !== null && 'sessionId' in args
-              ? { sessionId: String(args.sessionId) }
-              : {}),
-            suggestion: 'Check the tool inputs and current browser session, then retry or start a new session.',
-          }) }],
-        }
-      }
-    },
-  )
-}
-
-registerSafeTool(
+server.registerTool(
   'session_start',
-  'Start a persistent local Chromium session and return the first redacted page observation.',
   {
-    url: z.string().min(1).max(2048),
-    viewport: z.object({ width: z.number().int().min(320).max(7680), height: z.number().int().min(240).max(4320) }).nullable().optional(),
-    deviceName: z.string().min(1).max(100).nullable().optional(),
-    origins: z.array(z.string().min(1).max(2048)).max(20).optional(),
-    storageStatePath: z.string().min(1).max(1000).optional(),
+    description: 'Start a persistent local Chromium session and return the first redacted page observation.',
+    inputSchema: z.object({
+      url: z.string().min(1).max(2048),
+      viewport: z.object({ width: z.number().int().min(320).max(7680), height: z.number().int().min(240).max(4320) }).nullable().optional(),
+      deviceName: z.string().min(1).max(100).nullable().optional(),
+      origins: z.array(z.string().min(1).max(2048)).max(20).optional(),
+      storageStatePath: z.string().min(1).max(1000).optional(),
+    }).strict(),
   },
-  async (args) => {
-    const managed = await sessions.start(args)
+  async (args) => safeResult('session_start', undefined, async () => {
+    const managed = await sessions.start({
+      url: args.url,
+      ...(args.viewport !== undefined ? { viewport: args.viewport } : {}),
+      ...(args.deviceName !== undefined ? { deviceName: args.deviceName } : {}),
+      ...(args.origins !== undefined ? { origins: args.origins } : {}),
+      ...(args.storageStatePath !== undefined ? { storageStatePath: args.storageStatePath } : {}),
+    })
     try {
       return jsonResult({ sessionId: managed.id, startedAt: managed.startedAt, observation: JSON.parse(await managed.browser.observe()) as unknown })
     } catch (error) {
       await sessions.end(managed.id).catch(() => undefined)
       throw error
     }
-  },
+  }),
 )
 
-registerSafeTool('observe', 'Return the current redacted page state and newly recorded browser facts.', {
-  sessionId: z.string().uuid(),
-}, async ({ sessionId }) => {
+server.registerTool('observe', {
+  description: 'Return the current redacted page state and newly recorded browser facts.',
+  inputSchema: z.object({ sessionId: z.string().uuid() }).strict(),
+}, async ({ sessionId }) => safeResult('observe', sessionId, async () => {
   const managed = await sessions.get(sessionId)
   return jsonResult(JSON.parse(await managed.browser.observe()) as unknown)
-})
+}))
 
-registerSafeTool('browser_act', 'Perform exactly one validated, allowlisted browser operation.', {
-  sessionId: z.string().uuid(),
-  op: BrowserOperationSchema,
-}, async ({ sessionId, op }) => {
+server.registerTool('browser_act', {
+  description: 'Perform exactly one validated, allowlisted browser operation.',
+  inputSchema: z.object({ sessionId: z.string().uuid(), op: BrowserOperationSchema }).strict(),
+}, async ({ sessionId, op }) => safeResult('browser_act', sessionId, async () => {
   const managed = await sessions.get(sessionId)
   const factOffset = managed.browser.facts.length
   try {
@@ -189,23 +166,24 @@ registerSafeTool('browser_act', 'Perform exactly one validated, allowlisted brow
     }
     return { isError: true, content }
   }
-})
+}))
 
-registerSafeTool('assert', 'Evaluate deterministic page-state and recorded-fact assertions for a session.', {
-  sessionId: z.string().uuid(),
-  assertions: z.array(AssertionSchema).min(1).max(50),
-}, async ({ sessionId, assertions }) => {
+server.registerTool('assert', {
+  description: 'Evaluate deterministic page-state and recorded-fact assertions for a session.',
+  inputSchema: z.object({ sessionId: z.string().uuid(), assertions: z.array(AssertionSchema).min(1).max(50) }).strict(),
+}, async ({ sessionId, assertions }) => safeResult('assert', sessionId, async () => {
   const managed = await sessions.get(sessionId)
   const results = await evaluateAssertions(assertions, {
     page: managed.browser.assertionPage,
     facts: managed.browser.facts,
   })
   return jsonResult({ results, passed: results.every((result) => result.pass) })
-})
+}))
 
-registerSafeTool('session_end', 'Close a browser session and return its final in-memory fact roll-up.', {
-  sessionId: z.string().uuid(),
-}, async ({ sessionId }) => {
+server.registerTool('session_end', {
+  description: 'Close a browser session and return its final in-memory fact roll-up.',
+  inputSchema: z.object({ sessionId: z.string().uuid() }).strict(),
+}, async ({ sessionId }) => safeResult('session_end', sessionId, async () => {
   const managed = await sessions.end(sessionId)
   return jsonResult({
     sessionId,
@@ -216,30 +194,32 @@ registerSafeTool('session_end', 'Close a browser session and return its final in
     persistedArtifacts: false,
     note: 'Plan/run/evidence persistence is not available in this implementation.',
   })
-})
+}))
 
-registerSafeTool(
+server.registerTool(
   'health_sweep',
-  'Summarize observed browser health and check a bounded set of same-origin resources; optionally run axe-core.',
   {
-    sessionId: z.string().uuid().optional(),
-    url: z.string().min(1).max(2048).optional(),
-    includeA11y: z.boolean().default(false),
-    maxPages: z.number().int().min(1).max(HEALTH_SWEEP_MAX).default(20),
+    description: 'Summarize observed browser health and check a bounded set of same-origin resources; optionally run axe-core.',
+    inputSchema: z.object({
+      sessionId: z.string().uuid().optional(),
+      url: z.string().min(1).max(2048).optional(),
+      includeA11y: z.boolean().default(false),
+      maxPages: z.number().int().min(1).max(HEALTH_SWEEP_MAX).default(20),
+    }).strict(),
   },
-  async ({ sessionId, url, includeA11y, maxPages }) => {
+  async ({ sessionId, url, includeA11y, maxPages }) => safeResult('health_sweep', sessionId, async () => {
     if (!sessionId && !url) throw new Error('Provide either sessionId or url.')
     if (sessionId && url) throw new Error('Provide sessionId or url, not both.')
     const throwaway = !sessionId
     const managed = sessionId
       ? await sessions.get(sessionId)
-      : await sessions.start({ url: url! })
+      : await sessions.start({ url: requireProvidedUrl(url) })
     try {
       return jsonResult(await buildHealthReport(managed, maxPages, includeA11y))
     } finally {
       if (throwaway) await sessions.end(managed.id)
     }
-  },
+  }),
 )
 
 async function buildHealthReport(
@@ -259,6 +239,9 @@ async function buildHealthReport(
     }
   }))
   const httpFacts = facts.filter((fact) => fact.kind === 'http')
+  const startDocument = httpFacts.find(
+    (fact) => fact.kind === 'http' && fact.url === safeUrl(managed.startUrl.href) && fact.method === 'GET',
+  )
   const rollup = {
     consoleWarnings: facts.filter((fact) => fact.kind === 'console' && fact.level === 'warning').length,
     consoleErrors: facts.filter((fact) => fact.kind === 'console' && fact.level === 'error').length,
@@ -270,9 +253,7 @@ async function buildHealthReport(
       status: fact.status,
     } : undefined).filter((fact) => fact !== undefined),
     droppedFacts: managed.browser.facts.droppedCounts(),
-    ttfbMs: httpFacts.find((fact) => fact.kind === 'http' && fact.url === safeUrl(managed.startUrl.href) && fact.method === 'GET')?.kind === 'http'
-      ? (httpFacts.find((fact) => fact.kind === 'http' && fact.url === safeUrl(managed.startUrl.href) && fact.method === 'GET') as Extract<(typeof facts)[number], { kind: 'http' }>).ttfbMs
-      : undefined,
+    ttfbMs: startDocument?.kind === 'http' ? startDocument.ttfbMs : undefined,
     totalRecordedBytes: httpFacts.reduce((sum, fact) => sum + (fact.kind === 'http' ? fact.bytes ?? 0 : 0), 0),
     totalRecordedResponses: httpFacts.length,
   }
@@ -348,6 +329,28 @@ function jsonResult(value: unknown): CallToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(value) }] }
 }
 
+async function safeResult(
+  name: string,
+  sessionId: string | undefined,
+  handler: () => Promise<CallToolResult>,
+): Promise<CallToolResult> {
+  try {
+    return await handler()
+  } catch (error) {
+    const message = errorMessage(error)
+    process.stderr.write(`[Phloem ${name}] ${message}\n`)
+    return {
+      isError: true,
+      content: [{ type: 'text', text: JSON.stringify({
+        error: true,
+        reason: message,
+        ...(sessionId ? { sessionId } : {}),
+        suggestion: 'Check the tool inputs and current browser session, then retry or start a new session.',
+      }) }],
+    }
+  }
+}
+
 function safeUrl(value: string): string {
   try {
     const parsed = new URL(value)
@@ -359,6 +362,11 @@ function safeUrl(value: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'An unexpected error occurred.'
+}
+
+function requireProvidedUrl(value: string | undefined): string {
+  if (!value) throw new Error('Provide either sessionId or url.')
+  return value
 }
 
 export async function runMcpServer(): Promise<void> {
