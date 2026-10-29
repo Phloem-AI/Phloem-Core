@@ -11,9 +11,7 @@ export async function evaluateAssertions(
   assertions: readonly Assertion[],
   context: AssertionContext,
 ): Promise<AssertionResult[]> {
-  const results: AssertionResult[] = []
-  for (const assertion of assertions) results.push(await evaluateAssertion(assertion, context))
-  return results
+  return Promise.all(assertions.map((assertion) => evaluateAssertion(assertion, context)))
 }
 
 export async function evaluateAssertion(assertion: Assertion, context: AssertionContext): Promise<AssertionResult> {
