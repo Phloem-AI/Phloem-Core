@@ -6,7 +6,6 @@ import { redactText } from '../security/redaction.js'
 import { attachPageTaps, FactStore } from '../instrument/taps.js'
 
 const MAX_SNAPSHOT_LENGTH = 30_000
-const MAX_DIAGNOSTICS = 10
 
 export class BrowserOperationError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -259,15 +258,6 @@ export class BrowserSession {
     }
   }
 
-  private attachDiagnostics(): void {
-    this.page.on('console', (message) => {
-      if (message.type() === 'error') this.pushBounded(this.consoleErrors, this.redactKnownValues(message.text()))
-    })
-    this.page.on('requestfailed', (request) => {
-      this.pushBounded(this.failedRequests, `${request.method()} ${safePageUrl(request.url())}`)
-    })
-  }
-
   private async installNavigationGuard(): Promise<void> {
     await this.context.route('**/*', async (route) => {
       try {
@@ -374,7 +364,7 @@ export class BrowserSession {
       const destination = this.redirectedDocumentUrl
       this.redirectedDocumentUrl = undefined
       if (destination === this.page.url()) return
-      this.budget.recordBrowserOperation()
+      this.budget?.recordBrowserOperation()
       await this.page.goto(destination, { waitUntil: 'domcontentloaded', timeout: 15_000 })
       if (this.blockedNavigation) return
     }
@@ -396,10 +386,6 @@ export class BrowserSession {
     return redactText(value, [...this.knownSensitiveValues])
   }
 
-  private pushBounded(target: string[], value: string): void {
-    target.push(value.slice(0, 500))
-    if (target.length > MAX_DIAGNOSTICS) target.shift()
-  }
 }
 
 function safePageUrl(value: string): string {
@@ -409,6 +395,19 @@ function safePageUrl(value: string): string {
   } catch {
     return 'about:blank'
   }
+}
+
+function snapshotDelta(previous: string, current: string): string {
+  const previousLines = new Set(previous.split('\n'))
+  const currentLines = current.split('\n')
+  const added = currentLines.filter((line) => !previousLines.has(line))
+  const removed = previous.split('\n').filter((line) => line.length > 0 && !currentLines.includes(line))
+  return JSON.stringify({ added: added.slice(0, 100), removed: removed.slice(0, 100) }).slice(0, 18_000)
+}
+
+function textDelta(previous: string, current: string): string {
+  const previousLines = new Set(previous.split('\n'))
+  return current.split('\n').filter((line) => !previousLines.has(line)).join('\n').slice(0, 8_000)
 }
 
 function isSensitiveLocator(name: string): boolean {

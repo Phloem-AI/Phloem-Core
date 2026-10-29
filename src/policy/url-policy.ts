@@ -61,8 +61,21 @@ function extractExplicitOrigins(brief: string, baseHostname: string): Set<string
   return origins
 }
 
-export function createNavigationPolicy(startUrl: URL, brief: string): NavigationPolicy {
-  const allowedOrigins = extractExplicitOrigins(brief, startUrl.hostname)
+export function createNavigationPolicy(startUrl: URL, brief = '', origins?: readonly string[]): NavigationPolicy {
+  const allowedOrigins = origins
+    ? new Set(origins.map((origin) => {
+        let parsed: URL
+        try {
+          parsed = new URL(origin)
+        } catch {
+          throw new UrlPolicyError(`Invalid allowed origin: ${origin}`)
+        }
+        if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.origin !== origin.replace(/\/$/, '')) {
+          throw new UrlPolicyError(`Allowed origins must be HTTP(S) origins without paths: ${origin}`)
+        }
+        return parsed.origin
+      }))
+    : extractExplicitOrigins(brief, startUrl.hostname)
   allowedOrigins.add(startUrl.origin)
 
   return {
