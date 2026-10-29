@@ -4,7 +4,7 @@ import { redactText } from '../security/redaction.js'
 export type BrowserFact =
   | { kind: 'console'; ts: string; level: 'warning' | 'error'; text: string }
   | { kind: 'pageerror'; ts: string; message: string; stack?: string }
-  | { kind: 'http'; ts: string; method: string; url: string; status: number; bytes?: number }
+  | { kind: 'http'; ts: string; method: string; url: string; status: number; bytes?: number; ttfbMs?: number }
   | { kind: 'requestfailed'; ts: string; method: string; url: string; failure?: string }
   | { kind: 'dialog'; ts: string; dialogType: string; message: string; action: 'dismissed' }
   | { kind: 'lifecycle'; ts: string; event: 'page-close' | 'page-crash' | 'context-close' }
@@ -160,14 +160,17 @@ function appendFailedRequest(request: Request, facts: FactStore): void {
   })
 }
 
-async function appendResponse(response: Response, facts: FactStore): Promise<void> {
+function appendResponse(response: Response, facts: FactStore): void {
   const request = response.request()
+  const timing = response.timing()
+  const contentLength = Number(response.headers()['content-length'])
   facts.append({
     kind: 'http',
     ts: new Date().toISOString(),
     method: request.method(),
     url: requestUrl(request),
     status: response.status(),
-    ...(await response.body().then((body) => ({ bytes: body.length })).catch(() => ({}))),
+    ...(Number.isFinite(contentLength) && contentLength >= 0 ? { bytes: contentLength } : {}),
+    ...(timing.responseStart >= 0 ? { ttfbMs: timing.responseStart - timing.requestStart } : {}),
   })
 }
