@@ -71,6 +71,9 @@ export class BrowserSession {
     attachPageTaps(page, this.factStore, () => {
       this.lastActionStatus = { ok: false, detail: 'A browser dialog was dismissed.' }
     })
+    browser.on('disconnected', () =>
+      this.factStore.append({ kind: 'lifecycle', ts: new Date().toISOString(), event: 'browser-disconnected' }),
+    )
     context.on('close', () =>
       this.factStore.append({ kind: 'lifecycle', ts: new Date().toISOString(), event: 'context-close' }),
     )
@@ -233,15 +236,6 @@ export class BrowserSession {
       if (this.blockedNavigation) throw new BrowserOperationError(this.blockedNavigation, { cause: error })
       if (error instanceof UrlPolicyError) throw new BrowserOperationError(error.message, { cause: error })
       throw new BrowserOperationError(`${describeOperation(operation)} failed.`, { cause: error })
-    }
-  }
-
-  async captureTemporaryScreenshot(): Promise<Buffer | undefined> {
-    if (this.closed || this.page.isClosed() || !this.browser.isConnected()) return undefined
-    try {
-      return await this.page.screenshot({ type: 'png', fullPage: false, timeout: 5_000 })
-    } catch {
-      return undefined
     }
   }
 

@@ -3,6 +3,8 @@ import { createServer, type Server } from 'node:http'
 import { once } from 'node:events'
 import test from 'node:test'
 import { BrowserOperationError, BrowserSession } from '../src/browser/session.js'
+import { AssertionSchema } from '../src/contracts.js'
+import { evaluateAssertions } from '../src/assert/engine.js'
 import { createNavigationPolicy, parseWebsiteUrl } from '../src/policy/url-policy.js'
 
 async function listen(server: Server): Promise<string> {
@@ -41,11 +43,24 @@ test('Chromium snapshots accessible UI, redacts sensitive fields, and executes a
     assert.match(before, /Demo shop/)
     assert.match(before, /Add to cart/)
     assert.equal(before.includes('demo-pass'), false)
+    const initialAssertions = [
+      AssertionSchema.parse({ type: 'elementVisible', target: { role: 'heading', name: 'Demo shop' }, timeoutMs: 0 }),
+      AssertionSchema.parse({ type: 'textVisible', text: 'Cart is empty', timeoutMs: 0 }),
+    ]
+    assert.deepEqual(
+      (await evaluateAssertions(initialAssertions, { page: session.assertionPage, facts: session.facts })).map((result) => result.pass),
+      [true, true],
+    )
 
     const operation = { type: 'click', target: { role: 'button', name: 'Add to cart', exact: true } } as const
     await session.execute(operation)
     const after = await session.observe()
     assert.match(after, /Cart has one item/)
+    const result = await evaluateAssertions(
+      [AssertionSchema.parse({ type: 'textVisible', text: 'Cart has one item', timeoutMs: 0 })],
+      { page: session.assertionPage, facts: session.facts },
+    )
+    assert.equal(result[0]?.pass, true)
   } finally {
     await session.close()
   }

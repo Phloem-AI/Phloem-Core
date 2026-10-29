@@ -7,7 +7,7 @@ export type BrowserFact =
   | { kind: 'http'; ts: string; method: string; url: string; status: number; bytes?: number; ttfbMs?: number }
   | { kind: 'requestfailed'; ts: string; method: string; url: string; failure?: string }
   | { kind: 'dialog'; ts: string; dialogType: string; message: string; action: 'dismissed' }
-  | { kind: 'lifecycle'; ts: string; event: 'page-close' | 'page-crash' | 'context-close' }
+  | { kind: 'lifecycle'; ts: string; event: 'page-close' | 'page-crash' | 'context-close' | 'browser-disconnected' }
 
 export type FactKind = BrowserFact['kind']
 export type FactCounts = Record<FactKind, number>
@@ -18,7 +18,7 @@ const FACT_LIMITS: Record<FactKind, number> = {
   http: 200,
   requestfailed: 100,
   dialog: 50,
-  lifecycle: 20,
+  lifecycle: 30,
 }
 
 function safeUrl(value: string): string {

@@ -94,7 +94,7 @@ export function resolveAllowedNavigation(
   try {
     resolved = new URL(candidate, currentUrl)
   } catch {
-    throw new UrlPolicyError('Gemma proposed an invalid navigation URL.')
+    throw new UrlPolicyError('The proposed navigation URL is invalid.')
   }
 
   if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') {

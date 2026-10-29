@@ -25,3 +25,12 @@ test('navigation rejects subdomains even if mentioned in the brief', () => {
   const policy = createNavigationPolicy(startUrl, 'Visit https://shop.example.test')
   assert.throws(() => resolveAllowedNavigation('https://shop.example.test', startUrl.href, policy), /subdomains/)
 })
+
+test('explicit MCP origins are validated and restricted to exact origins', () => {
+  const startUrl = parseWebsiteUrl('https://example.test')
+  const policy = createNavigationPolicy(startUrl, '', ['https://payments.test'])
+  assert.equal(resolveAllowedNavigation('https://payments.test/checkout', startUrl.href, policy).origin, 'https://payments.test')
+  assert.throws(() => resolveAllowedNavigation('https://shop.payments.test', startUrl.href, policy), UrlPolicyError)
+  assert.throws(() => createNavigationPolicy(startUrl, '', ['javascript:alert(1)']), UrlPolicyError)
+  assert.throws(() => createNavigationPolicy(startUrl, '', ['https://payments.test/path']), UrlPolicyError)
+})

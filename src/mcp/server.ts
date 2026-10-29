@@ -150,20 +150,18 @@ server.registerTool('browser_act', {
     const detail = await managed.browser.execute(op)
     return jsonResult({ ok: true, detail, facts: managed.browser.facts.digest(managed.browser.facts.since(factOffset)) })
   } catch (error) {
-    const screenshot = await managed.browser.captureTemporaryScreenshot()
     const content: CallToolResult['content'] = [{
       type: 'text',
       text: JSON.stringify({
         ok: false,
+        sessionId,
         reason: errorMessage(error),
         policyBlocked: error instanceof BrowserOperationError && /origin policy|Navigation target|subdomains/i.test(error.message),
+        suggestion: 'Inspect the current page and allowed origins, then choose a supported browser operation.',
+        screenshot: 'Not captured; redacted evidence storage is deferred.',
         facts: managed.browser.facts.digest(managed.browser.facts.since(factOffset)),
       }),
     }]
-    if (screenshot) {
-      content.push({ type: 'image', data: screenshot.toString('base64'), mimeType: 'image/png' })
-      screenshot.fill(0)
-    }
     return { isError: true, content }
   }
 }))
@@ -254,7 +252,8 @@ async function buildHealthReport(
     } : undefined).filter((fact) => fact !== undefined),
     droppedFacts: managed.browser.facts.droppedCounts(),
     ttfbMs: startDocument?.kind === 'http' ? startDocument.ttfbMs : undefined,
-    totalRecordedBytes: httpFacts.reduce((sum, fact) => sum + (fact.kind === 'http' ? fact.bytes ?? 0 : 0), 0),
+    contentLengthBytes: httpFacts.reduce((sum, fact) => sum + (fact.kind === 'http' ? fact.bytes ?? 0 : 0), 0),
+    responsesWithoutContentLength: httpFacts.filter((fact) => fact.kind === 'http' && fact.bytes === undefined).length,
     totalRecordedResponses: httpFacts.length,
   }
   const a11y = includeA11y
@@ -295,7 +294,7 @@ async function collectSameOriginResources(page: import('playwright').Page, origi
 async function runAccessibilityScan(page: import('playwright').Page): Promise<unknown> {
   try {
     const axe = await import('axe-core')
-    await page.addScriptTag({ content: axe.source })
+    await page.addScriptTag({ content: axe.default.source })
     return await page.evaluate(async () => {
       const axeApi = (window as Window & { axe?: { run: () => Promise<{ violations: Array<{ id: string; impact: string | null; description: string; nodes: unknown[] }> }> } }).axe
       if (!axeApi) throw new Error('axe-core did not initialize in the page.')

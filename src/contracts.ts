@@ -84,59 +84,6 @@ export const BrowserOperationSchema = z.discriminatedUnion('type', [
   WaitForVisibleOperationSchema,
 ])
 
-export const ObjectiveSchema = z
-  .object({
-    id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),
-    name: z.string().trim().min(1).max(120),
-    purpose: z.string().trim().min(1).max(500),
-    expectedOutcome: z.string().trim().min(1).max(500),
-    successCriteria: z.array(z.string().trim().min(1).max(300)).min(1).max(5),
-  })
-  .strict()
-
-export const ObjectivePlanSchema = z
-  .object({
-    schemaVersion: z.literal('1'),
-    objectives: z.array(ObjectiveSchema).min(1).max(15),
-  })
-  .superRefine((plan, context) => {
-    const ids = new Set<string>()
-    for (const [index, objective] of plan.objectives.entries()) {
-      if (ids.has(objective.id)) {
-        context.addIssue({ code: 'custom', path: ['objectives', index, 'id'], message: 'Objective IDs must be unique.' })
-      }
-      ids.add(objective.id)
-    }
-  })
-  .strict()
-
-export const FlowStepResponseSchema = z.discriminatedUnion('kind', [
-  z
-    .object({
-      schemaVersion: z.literal('1'),
-      kind: z.literal('operation'),
-      operation: BrowserOperationSchema,
-      purpose: z.string().trim().min(1).max(300),
-    })
-    .strict(),
-  z
-    .object({
-      schemaVersion: z.literal('1'),
-      kind: z.literal('complete'),
-      summary: z.string().trim().min(1).max(500),
-    })
-    .strict(),
-])
-
-export const ObjectiveVerdictSchema = z
-  .object({
-    schemaVersion: z.literal('1'),
-    status: z.enum(['passed', 'failed']),
-    reason: z.string().trim().min(1).max(1000),
-    evidence: z.array(z.string().trim().min(1).max(300)).max(5),
-  })
-  .strict()
-
 const AssertionTarget = z.object({
   role: z.enum(LOCATOR_ROLES),
   name: z.string().trim().min(1).max(200),
@@ -233,10 +180,6 @@ export const MCPToolInputSchemas = {
 
 export type Locator = z.infer<typeof LocatorSchema>
 export type BrowserOperation = z.infer<typeof BrowserOperationSchema>
-export type Objective = z.infer<typeof ObjectiveSchema>
-export type ObjectivePlan = z.infer<typeof ObjectivePlanSchema>
-export type FlowStepResponse = z.infer<typeof FlowStepResponseSchema>
-export type ObjectiveVerdict = z.infer<typeof ObjectiveVerdictSchema>
 export type Assertion = z.infer<typeof AssertionSchema>
 export type AssertionResult = z.infer<typeof AssertionResultSchema>
 export type Step = z.infer<typeof StepSchema>
