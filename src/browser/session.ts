@@ -239,15 +239,6 @@ export class BrowserSession {
     }
   }
 
-  async captureTemporaryScreenshot(): Promise<Buffer | undefined> {
-    if (this.closed || this.page.isClosed() || !this.browser.isConnected()) return undefined
-    try {
-      return await this.page.screenshot({ type: 'png', fullPage: false, timeout: 5_000 })
-    } catch {
-      return undefined
-    }
-  }
-
   async close(): Promise<void> {
     if (this.closed) return
     this.closed = true
