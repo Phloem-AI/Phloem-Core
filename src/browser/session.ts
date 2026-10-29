@@ -82,9 +82,10 @@ export class BrowserSession {
       browser = await chromium.launch({ headless: options.headless ?? true, chromiumSandbox: true })
       const device = options.deviceName ? devices[options.deviceName] : undefined
       if (options.deviceName && !device) throw new Error(`Unknown Playwright device descriptor: ${options.deviceName}`)
+      const { defaultBrowserType: _defaultBrowserType, ...deviceOptions } = device ?? {}
       const context = await browser.newContext({
         acceptDownloads: false,
-        ...(device ? { ...device } : {}),
+        ...deviceOptions,
         ...(options.viewport !== undefined ? { viewport: options.viewport } : {}),
         ...(options.storageStatePath ? { storageState: options.storageStatePath } : {}),
       })
@@ -129,7 +130,7 @@ export class BrowserSession {
       const newFacts = this.factStore.since(this.lastObservedFactIndex)
       const factDigest = this.factStore.digest(newFacts)
       const payload = {
-        url: safePageUrl(this.page.url()),
+        url: this.redactKnownValues(safePageUrl(this.page.url())),
         title: this.redactKnownValues(title).slice(0, 300),
         accessibleSnapshot: safeAriaTree.slice(0, 18_000),
         accessibleSnapshotDelta: snapshotDelta(this.lastAriaSnapshot, safeAriaTree),
@@ -220,7 +221,7 @@ export class BrowserSession {
       if (this.blockedNavigation) throw new BrowserOperationError(this.blockedNavigation)
       await this.completeAllowedRedirects()
       if (this.blockedNavigation) throw new BrowserOperationError(this.blockedNavigation)
-      const detail = operationDescription ?? describeOperation(operation)
+      const detail = this.redactKnownValues(operationDescription ?? describeOperation(operation))
       this.lastActionStatus = { ok: true, detail }
       return detail
     } catch (error) {

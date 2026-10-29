@@ -189,7 +189,7 @@ server.registerTool('session_end', {
     sessionId,
     startedAt: managed.startedAt,
     endedAt: new Date().toISOString(),
-    url: safeUrl(managed.browser.currentUrl),
+    url: managed.browser.facts.redact(safeUrl(managed.browser.currentUrl)),
     facts: managed.browser.facts.digest(managed.browser.facts.all()),
     persistedArtifacts: false,
     note: 'Plan/run/evidence persistence is not available in this implementation.',
@@ -233,9 +233,9 @@ async function buildHealthReport(
   const resourceChecks = await Promise.all(resources.map(async (url) => {
     try {
       const response = await page.request.get(url, { timeout: 5_000, maxRedirects: 0 })
-      return { url: safeUrl(url), status: response.status() }
+      return { url: managed.browser.facts.redact(safeUrl(url)), status: response.status() }
     } catch (error) {
-      return { url: safeUrl(url), error: errorMessage(error) }
+      return { url: managed.browser.facts.redact(safeUrl(url)), error: managed.browser.facts.redact(errorMessage(error)) }
     }
   }))
   const httpFacts = facts.filter((fact) => fact.kind === 'http')
@@ -262,7 +262,7 @@ async function buildHealthReport(
     : { status: 'not_requested' as const }
   return {
     sessionId: managed.id,
-    url: safeUrl(page.url()),
+    url: managed.browser.facts.redact(safeUrl(page.url())),
     rollup,
     sameOriginResourceChecks: resourceChecks,
     accessibility: a11y,
