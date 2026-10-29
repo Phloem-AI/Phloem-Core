@@ -3,6 +3,7 @@ import type { BrowserOperation, Locator } from '../contracts.js'
 import { RunBudget } from '../policy/run-budget.js'
 import { resolveAllowedNavigation, UrlPolicyError, type NavigationPolicy } from '../policy/url-policy.js'
 import { redactText } from '../security/redaction.js'
+import { attachPageTaps, FactStore } from '../instrument/taps.js'
 
 const MAX_SNAPSHOT_LENGTH = 30_000
 const MAX_DIAGNOSTICS = 10
@@ -24,10 +25,13 @@ export class BrowserRuntimeError extends Error {
 export interface BrowserSessionOptions {
   startUrl: URL
   navigationPolicy: NavigationPolicy
-  budget: RunBudget
+  budget?: RunBudget
   headless?: boolean
   signal?: AbortSignal
   sensitiveValues?: readonly string[]
+  viewport?: { width: number; height: number } | null
+  deviceName?: string | null
+  storageStatePath?: string
 }
 
 type CachedDocumentResponse = {
@@ -41,12 +45,15 @@ export class BrowserSession {
   private readonly context: BrowserContext
   private readonly page: Page
   private readonly navigationPolicy: NavigationPolicy
-  private readonly budget: RunBudget
+  private readonly budget: RunBudget | undefined
   private readonly signal: AbortSignal | undefined
-  private readonly consoleErrors: string[] = []
-  private readonly failedRequests: string[] = []
   private readonly knownSensitiveValues = new Set<string>()
+  private readonly factStore: FactStore
   private readonly prefetchedDocuments = new Map<string, CachedDocumentResponse>()
+  private lastAriaSnapshot = ''
+  private lastVisibleText = ''
+  private lastObservedFactIndex = 0
+  private lastActionStatus: { ok: boolean; detail: string } | undefined
   private blockedNavigation: string | undefined
   private redirectedDocumentUrl: string | undefined
   private closed = false
@@ -64,14 +71,27 @@ export class BrowserSession {
     this.budget = options.budget
     this.signal = options.signal
     for (const value of options.sensitiveValues ?? []) this.knownSensitiveValues.add(value)
-    this.attachDiagnostics()
+    this.factStore = new FactStore(() => [...this.knownSensitiveValues])
+    attachPageTaps(page, this.factStore, () => {
+      this.lastActionStatus = { ok: false, detail: 'A browser dialog was dismissed.' }
+    })
+    context.on('close', () =>
+      this.factStore.append({ kind: 'lifecycle', ts: new Date().toISOString(), event: 'context-close' }),
+    )
   }
 
   static async open(options: BrowserSessionOptions): Promise<BrowserSession> {
     let browser: Browser | undefined
     try {
       browser = await chromium.launch({ headless: options.headless ?? true, chromiumSandbox: true })
-      const context = await browser.newContext({ acceptDownloads: false })
+      const device = options.deviceName ? chromium.devices[options.deviceName] : undefined
+      if (options.deviceName && !device) throw new Error(`Unknown Playwright device descriptor: ${options.deviceName}`)
+      const context = await browser.newContext({
+        acceptDownloads: false,
+        ...(device ? { ...device } : {}),
+        ...(options.viewport ? { viewport: options.viewport } : {}),
+        ...(options.storageStatePath ? { storageState: options.storageStatePath } : {}),
+      })
       const page = await context.newPage()
       page.setDefaultTimeout(5_000)
       page.setDefaultNavigationTimeout(15_000)
@@ -90,9 +110,18 @@ export class BrowserSession {
     return this.page.url()
   }
 
+  get facts(): FactStore {
+    return this.factStore
+  }
+
+  get assertionPage(): Page {
+    this.assertUsable()
+    return this.page
+  }
+
   async observe(): Promise<string> {
     this.assertUsable()
-    this.budget.recordBrowserOperation()
+    this.budget?.recordBrowserOperation()
 
     try {
       const [title, ariaTree, visibleText] = await Promise.all([
@@ -100,16 +129,27 @@ export class BrowserSession {
         this.page.locator('body').ariaSnapshot({ timeout: 5_000 }).catch(() => ''),
         this.page.locator('body').innerText({ timeout: 5_000 }).catch(() => ''),
       ])
-      const safeAriaTree = this.redactInputValues(ariaTree)
+      const safeAriaTree = this.redactInputValues(ariaTree).slice(0, 18_000)
       const safeText = this.redactKnownValues(visibleText).slice(0, 8_000)
+      const newFacts = this.factStore.since(this.lastObservedFactIndex)
+      const factDigest = this.factStore.digest(newFacts)
       const payload = {
         url: safePageUrl(this.page.url()),
         title: this.redactKnownValues(title).slice(0, 300),
         accessibleSnapshot: safeAriaTree.slice(0, 18_000),
+        accessibleSnapshotDelta: snapshotDelta(this.lastAriaSnapshot, safeAriaTree),
         visibleText: safeText,
-        consoleErrors: this.consoleErrors.slice(-MAX_DIAGNOSTICS),
-        failedRequests: this.failedRequests.slice(-MAX_DIAGNOSTICS),
+        visibleTextDelta: textDelta(this.lastVisibleText, safeText),
+        actionStatus: this.lastActionStatus,
+        facts: factDigest,
+        truncated: {
+          accessibleSnapshot: ariaTree.length > safeAriaTree.length,
+          visibleText: visibleText.length > safeText.length,
+        },
       }
+      this.lastAriaSnapshot = safeAriaTree
+      this.lastVisibleText = safeText
+      this.lastObservedFactIndex = this.factStore.length
       return JSON.stringify(payload).slice(0, MAX_SNAPSHOT_LENGTH)
     } catch (error) {
       if (!this.browser.isConnected() || this.page.isClosed()) {
@@ -121,7 +161,7 @@ export class BrowserSession {
 
   async execute(operation: BrowserOperation): Promise<string> {
     this.assertUsable()
-    this.budget.recordBrowserOperation()
+    this.budget?.recordBrowserOperation()
     this.blockedNavigation = undefined
     this.redirectedDocumentUrl = undefined
     let operationDescription: string | undefined
@@ -165,8 +205,11 @@ export class BrowserSession {
       if (this.blockedNavigation) throw new BrowserOperationError(this.blockedNavigation)
       await this.completeAllowedRedirects()
       if (this.blockedNavigation) throw new BrowserOperationError(this.blockedNavigation)
-      return operationDescription ?? describeOperation(operation)
+      const detail = operationDescription ?? describeOperation(operation)
+      this.lastActionStatus = { ok: true, detail }
+      return detail
     } catch (error) {
+      this.lastActionStatus = { ok: false, detail: error instanceof Error ? error.message : 'Browser action failed.' }
       if (error instanceof BrowserOperationError) throw error
       if (!this.browser.isConnected() || this.page.isClosed()) {
         throw new BrowserRuntimeError('Chromium exited while executing a browser operation.', { cause: error })
@@ -179,7 +222,7 @@ export class BrowserSession {
 
   async captureTemporaryScreenshot(): Promise<Buffer | undefined> {
     if (this.closed || this.page.isClosed() || !this.browser.isConnected()) return undefined
-    this.budget.recordBrowserOperation()
+    this.budget?.recordBrowserOperation()
     try {
       return await this.page.screenshot({ type: 'png', fullPage: false, timeout: 5_000 })
     } catch {
@@ -190,8 +233,19 @@ export class BrowserSession {
   async close(): Promise<void> {
     if (this.closed) return
     this.closed = true
-    await this.context.close().catch(() => undefined)
-    await this.browser.close().catch(() => undefined)
+    let closeError: unknown
+    try {
+      await this.context.close()
+    } catch (error) {
+      closeError = error
+    } finally {
+      await this.browser.close().catch((error: unknown) => {
+        if (closeError === undefined) closeError = error
+      })
+    }
+    if (closeError !== undefined) {
+      throw new BrowserRuntimeError('Could not close the Chromium session cleanly.', { cause: closeError })
+    }
   }
 
   private target(locator: Locator) {
