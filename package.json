@@ -31,6 +31,7 @@
   "dependencies": {
     "@inquirer/core": "^12.0.4",
     "@inquirer/prompts": "^8.0.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@napi-rs/keyring": "^2.1.0",
     "clipboardy": "^5.3.2",
     "playwright": "^1.63.0",
