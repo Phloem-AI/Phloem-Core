@@ -85,7 +85,11 @@ export class FactStore {
     return { ...this.dropped }
   }
 
-  digest(facts: readonly BrowserFact[]): { counts: FactCounts; exemplars: BrowserFact[]; dropped: FactCounts } {
+  digest(facts: readonly BrowserFact[]): {
+    counts: FactCounts
+    exemplars: BrowserFact[]
+    droppedSessionTotal: FactCounts
+  } {
     const counts: FactCounts = {
       console: 0,
       pageerror: 0,
@@ -95,7 +99,11 @@ export class FactStore {
       lifecycle: 0,
     }
     for (const fact of facts) counts[fact.kind] += 1
-    return { counts, exemplars: facts.slice(0, 4).map((fact) => ({ ...fact })), dropped: this.droppedCounts() }
+    return {
+      counts,
+      exemplars: facts.slice(0, 4).map((fact) => ({ ...fact })),
+      droppedSessionTotal: this.droppedCounts(),
+    }
   }
 
   private redactFact(fact: BrowserFact): BrowserFact {
@@ -125,7 +133,7 @@ export class FactStore {
   }
 }
 
-export function attachPageTaps(page: Page, facts: FactStore, onDialogDismissed?: () => void): void {
+export function attachPageTaps(page: Page, facts: FactStore): void {
   page.on('console', (message) => {
     const level = message.type()
     if (level !== 'error' && level !== 'warning') return
@@ -154,7 +162,6 @@ export function attachPageTaps(page: Page, facts: FactStore, onDialogDismissed?:
       message: dialog.message(),
       action: 'dismissed',
     })
-    onDialogDismissed?.()
     await dialog.dismiss().catch(() => undefined)
   })
   page.on('close', () => facts.append({ kind: 'lifecycle', ts: new Date().toISOString(), event: 'page-close' }))

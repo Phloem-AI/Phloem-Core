@@ -68,9 +68,7 @@ export class BrowserSession {
     this.signal = options.signal
     for (const value of options.sensitiveValues ?? []) this.knownSensitiveValues.add(value)
     this.factStore = new FactStore(() => [...this.knownSensitiveValues])
-    attachPageTaps(page, this.factStore, () => {
-      this.lastActionStatus = { ok: false, detail: 'A browser dialog was dismissed.' }
-    })
+    attachPageTaps(page, this.factStore)
     browser.on('disconnected', () =>
       this.factStore.append({ kind: 'lifecycle', ts: new Date().toISOString(), event: 'browser-disconnected' }),
     )
@@ -128,8 +126,10 @@ export class BrowserSession {
         this.page.locator('body').ariaSnapshot({ timeout: 5_000 }).catch(() => ''),
         this.page.locator('body').innerText({ timeout: 5_000 }).catch(() => ''),
       ])
-      const safeAriaTree = this.redactInputValues(ariaTree).slice(0, 18_000)
-      const safeText = this.redactKnownValues(visibleText).slice(0, 8_000)
+      const redactedAriaTree = this.redactInputValues(ariaTree)
+      const redactedText = this.redactKnownValues(visibleText)
+      const safeAriaTree = redactedAriaTree.slice(0, 18_000)
+      const safeText = redactedText.slice(0, 8_000)
       const newFacts = this.factStore.since(this.lastObservedFactIndex)
       const factDigest = this.factStore.digest(newFacts)
       const payload = {
@@ -142,8 +142,8 @@ export class BrowserSession {
         actionStatus: this.lastActionStatus,
         facts: factDigest,
         truncated: {
-          accessibleSnapshot: ariaTree.length > safeAriaTree.length,
-          visibleText: visibleText.length > safeText.length,
+          accessibleSnapshot: redactedAriaTree.length > 18_000,
+          visibleText: redactedText.length > 8_000,
           total: false,
         },
       }

@@ -106,7 +106,7 @@ export const AssertionSchema = z.discriminatedUnion('type', [
   }).strict(),
   z.object({
     type: z.literal('httpStatus'),
-    urlPattern: PatternSchema,
+    urlPattern: PatternSchema.describe('Substring matched against recorded response URLs.'),
     expect: z.array(z.number().int().min(100).max(599)).max(20).optional(),
     not: z.array(z.number().int().min(100).max(599)).max(20).optional(),
   }).strict(),
@@ -171,12 +171,6 @@ export const RunRecordSchema = z.object({
   facts: z.array(z.unknown()),
   evidencePaths: z.array(z.string().max(1000)),
 }).strict()
-
-export const MCPToolInputSchemas = {
-  browserOperation: z.toJSONSchema(BrowserOperationSchema, { target: 'draft-7' }),
-  assertion: z.toJSONSchema(AssertionSchema, { target: 'draft-7' }),
-  assertions: z.toJSONSchema(z.object({ assertions: z.array(AssertionSchema).min(1).max(50) }).strict(), { target: 'draft-7' }),
-} as const
 
 export type Locator = z.infer<typeof LocatorSchema>
 export type BrowserOperation = z.infer<typeof BrowserOperationSchema>
