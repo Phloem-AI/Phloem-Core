@@ -24,6 +24,7 @@ type ManagedSession = {
 
 class SessionManager {
   private readonly sessions = new Map<string, ManagedSession>()
+  private reaping: Promise<void> | undefined
 
   async start(options: {
     url: string
@@ -81,7 +82,15 @@ class SessionManager {
     }
   }
 
-  private async reapExpired(): Promise<void> {
+  async reapExpired(): Promise<void> {
+    if (this.reaping) return this.reaping
+    this.reaping = this.closeExpiredSessions().finally(() => {
+      this.reaping = undefined
+    })
+    return this.reaping
+  }
+
+  private async closeExpiredSessions(): Promise<void> {
     const now = Date.now()
     const expired = [...this.sessions.values()].filter((session) => now - session.lastUsedAt > SESSION_TTL_MS)
     for (const session of expired) {
@@ -372,9 +381,16 @@ export async function runMcpServer(): Promise<void> {
   process.stdout.setDefaultEncoding('utf8')
   const transport = new StdioServerTransport()
   let shuttingDown = false
+  const ttlReaper = setInterval(() => {
+    void sessions.reapExpired().catch((error: unknown) => {
+      process.stderr.write(`Phloem session TTL reaper failed: ${errorMessage(error)}\n`)
+    })
+  }, 5 * 60 * 1000)
+  ttlReaper.unref()
   const shutdown = async (reason: string): Promise<void> => {
     if (shuttingDown) return
     shuttingDown = true
+    clearInterval(ttlReaper)
     process.stderr.write(`Phloem MCP server shutting down (${reason}).\n`)
     try {
       await sessions.closeAll()

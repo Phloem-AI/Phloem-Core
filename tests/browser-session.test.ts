@@ -74,43 +74,6 @@ test('Chromium blocks navigation to an origin not named in the brief', async (co
     response.end('<!doctype html><html><body><h1>Named external destination</h1></body></html>')
   })
 
-  test('session taps record page errors, console warnings, and HTTP failures', async (context) => {
-    const server = createServer((request, response) => {
-      if (request.url === '/api/failure') {
-        response.writeHead(500, { 'content-type': 'text/plain' })
-        response.end('failed')
-        return
-      }
-      response.writeHead(200, { 'content-type': 'text/html' })
-      response.end(`<!doctype html><html><body>
-        <h1>Instrumentation fixture</h1>
-        <script>
-          console.warn('fixture warning');
-          console.error('fixture console error');
-          fetch('/api/failure');
-          setTimeout(() => { throw new Error('fixture page error'); }, 0);
-        </script>
-      </body></html>`)
-    })
-    const baseUrl = await listen(server)
-    context.after(() => close(server))
-    const websiteUrl = parseWebsiteUrl(baseUrl)
-    const session = await BrowserSession.open({
-      startUrl: websiteUrl,
-      navigationPolicy: createNavigationPolicy(websiteUrl),
-    })
-
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 200))
-      const kinds = session.facts.all().map((fact) => fact.kind)
-      assert.ok(kinds.includes('pageerror'))
-      assert.ok(kinds.includes('console'))
-      assert.ok(session.facts.all().some((fact) => fact.kind === 'http' && fact.status === 500))
-      assert.ok(session.facts.all().some((fact) => fact.kind === 'console' && fact.level === 'warning'))
-    } finally {
-      await session.close()
-    }
-  })
   const externalUrl = await listen(externalServer)
   context.after(() => close(externalServer))
 
@@ -151,5 +114,43 @@ test('Chromium blocks navigation to an origin not named in the brief', async (co
     assert.equal(externalRequests, 1)
   } finally {
     await allowedSession.close()
+  }
+})
+
+test('session taps record page errors, console warnings, and HTTP failures', async (context) => {
+  const server = createServer((request, response) => {
+    if (request.url === '/api/failure') {
+      response.writeHead(500, { 'content-type': 'text/plain' })
+      response.end('failed')
+      return
+    }
+    response.writeHead(200, { 'content-type': 'text/html' })
+    response.end(`<!doctype html><html><body>
+      <h1>Instrumentation fixture</h1>
+      <script>
+        console.warn('fixture warning');
+        console.error('fixture console error');
+        fetch('/api/failure');
+        setTimeout(() => { throw new Error('fixture page error'); }, 0);
+      </script>
+    </body></html>`)
+  })
+  const baseUrl = await listen(server)
+  context.after(() => close(server))
+  const websiteUrl = parseWebsiteUrl(baseUrl)
+  const session = await BrowserSession.open({
+    startUrl: websiteUrl,
+    navigationPolicy: createNavigationPolicy(websiteUrl),
+  })
+
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    const kinds = session.facts.all().map((fact) => fact.kind)
+    assert.ok(kinds.includes('pageerror'))
+    assert.ok(kinds.includes('console'))
+    assert.ok(session.facts.all().some((fact) => fact.kind === 'http' && fact.status === 500))
+    assert.ok(session.facts.all().some((fact) => fact.kind === 'console' && fact.level === 'warning'))
+  } finally {
+    await session.close()
   }
 })

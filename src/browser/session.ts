@@ -1,5 +1,5 @@
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright'
-import { devices } from '@playwright/test'
+import { devices } from 'playwright'
 import type { BrowserOperation, Locator } from '../contracts.js'
 import { resolveAllowedNavigation, UrlPolicyError, type NavigationPolicy } from '../policy/url-policy.js'
 import { redactText } from '../security/redaction.js'
