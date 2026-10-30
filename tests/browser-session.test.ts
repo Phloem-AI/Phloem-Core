@@ -46,11 +46,16 @@ test('Chromium snapshots accessible UI, redacts sensitive fields, and executes a
     const initialAssertions = [
       AssertionSchema.parse({ type: 'elementVisible', target: { role: 'heading', name: 'Demo shop' }, timeoutMs: 0 }),
       AssertionSchema.parse({ type: 'textVisible', text: 'Cart is empty', timeoutMs: 0 }),
+      AssertionSchema.parse({
+        type: 'elementState',
+        target: { role: 'button', name: 'Add to cart' },
+        state: 'checked',
+        timeoutMs: 0,
+      }),
     ]
-    assert.deepEqual(
-      (await evaluateAssertions(initialAssertions, { page: session.assertionPage, facts: session.facts })).map((result) => result.pass),
-      [true, true],
-    )
+    const initialResults = await evaluateAssertions(initialAssertions, { page: session.assertionPage, facts: session.facts })
+    assert.deepEqual(initialResults.map((result) => result.pass), [true, true, false])
+    assert.match(initialResults[2]?.detail ?? '', /requires a checkbox or radio role/)
 
     const operation = { type: 'click', target: { role: 'button', name: 'Add to cart', exact: true } } as const
     await session.execute(operation)
@@ -134,6 +139,27 @@ test('session taps record page errors, console warnings, and HTTP failures', asy
         setTimeout(() => { throw new Error('fixture page error'); }, 0);
       </script>
     </body></html>`)
+  })
+
+  test('observe truncation flags reflect content beyond configured caps', async (context) => {
+    const longText = 'a'.repeat(8_100)
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'text/html' })
+      response.end(`<!doctype html><html><body>${longText}</body></html>`)
+    })
+    const baseUrl = await listen(server)
+    context.after(() => close(server))
+    const startUrl = parseWebsiteUrl(baseUrl)
+    const session = await BrowserSession.open({
+      startUrl,
+      navigationPolicy: createNavigationPolicy(startUrl),
+    })
+    try {
+      const observation = JSON.parse(await session.observe()) as { truncated: { visibleText: boolean } }
+      assert.equal(observation.truncated.visibleText, true)
+    } finally {
+      await session.close()
+    }
   })
   const baseUrl = await listen(server)
   context.after(() => close(server))
