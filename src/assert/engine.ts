@@ -61,7 +61,9 @@ export async function evaluateAssertion(assertion: Assertion, context: Assertion
   } catch (error) {
     return failed(
       undefined,
-      `Assertion "${assertion.type}" could not be evaluated: ${error instanceof Error ? error.message : 'unknown error'}`,
+      context.facts.redact(
+        `Assertion "${assertion.type}" could not be evaluated: ${error instanceof Error ? error.message : 'unknown error'}`,
+      ).slice(0, 2_000),
     )
   }
 }

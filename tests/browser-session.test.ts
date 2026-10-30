@@ -141,26 +141,6 @@ test('session taps record page errors, console warnings, and HTTP failures', asy
     </body></html>`)
   })
 
-  test('observe truncation flags reflect content beyond configured caps', async (context) => {
-    const longText = 'a'.repeat(8_100)
-    const server = createServer((_request, response) => {
-      response.writeHead(200, { 'content-type': 'text/html' })
-      response.end(`<!doctype html><html><body>${longText}</body></html>`)
-    })
-    const baseUrl = await listen(server)
-    context.after(() => close(server))
-    const startUrl = parseWebsiteUrl(baseUrl)
-    const session = await BrowserSession.open({
-      startUrl,
-      navigationPolicy: createNavigationPolicy(startUrl),
-    })
-    try {
-      const observation = JSON.parse(await session.observe()) as { truncated: { visibleText: boolean } }
-      assert.equal(observation.truncated.visibleText, true)
-    } finally {
-      await session.close()
-    }
-  })
   const baseUrl = await listen(server)
   context.after(() => close(server))
   const websiteUrl = parseWebsiteUrl(baseUrl)
@@ -176,6 +156,60 @@ test('session taps record page errors, console warnings, and HTTP failures', asy
     assert.ok(kinds.includes('console'))
     assert.ok(session.facts.all().some((fact) => fact.kind === 'http' && fact.status === 500))
     assert.ok(session.facts.all().some((fact) => fact.kind === 'console' && fact.level === 'warning'))
+  } finally {
+    await session.close()
+  }
+})
+
+test('observe truncation flags reflect content beyond configured caps', async (context) => {
+  const longText = 'a'.repeat(8_100)
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html' })
+    response.end(`<!doctype html><html><body>${longText}</body></html>`)
+  })
+  const baseUrl = await listen(server)
+  context.after(() => close(server))
+  const startUrl = parseWebsiteUrl(baseUrl)
+  const session = await BrowserSession.open({
+    startUrl,
+    navigationPolicy: createNavigationPolicy(startUrl),
+  })
+  try {
+    const observation = JSON.parse(await session.observe()) as { truncated: { visibleText: boolean } }
+    assert.equal(observation.truncated.visibleText, true)
+  } finally {
+    await session.close()
+  }
+})
+
+test('a later dialog fact does not rewrite the preceding action result', async (context) => {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html' })
+    response.end(`<!doctype html><html><body>
+      <button>Open dialog</button>
+      <script>
+        document.querySelector('button').addEventListener('click', () => {
+          setTimeout(() => alert('fixture dialog'), 50);
+        });
+      </script>
+    </body></html>`)
+  })
+  const baseUrl = await listen(server)
+  context.after(() => close(server))
+  const startUrl = parseWebsiteUrl(baseUrl)
+  const session = await BrowserSession.open({
+    startUrl,
+    navigationPolicy: createNavigationPolicy(startUrl),
+  })
+  try {
+    await session.execute({ type: 'click', target: { role: 'button', name: 'Open dialog', exact: true } })
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const observation = JSON.parse(await session.observe()) as {
+      actionStatus: { ok: boolean } | undefined
+      facts: { counts: { dialog: number } }
+    }
+    assert.equal(observation.actionStatus?.ok, true)
+    assert.equal(observation.facts.counts.dialog, 1)
   } finally {
     await session.close()
   }
