@@ -27,9 +27,10 @@ export async function evaluateAssertion(assertion: Assertion, context: Assertion
         const statuses = matching.map((fact) => fact.kind === 'http' ? fact.status : 0)
         const expected = assertion.expect
         const rejected = new Set(assertion.not ?? [])
-        const pass = statuses.every((status) =>
-          expected ? expected.includes(status) : rejected.has(status) ? false : status < 400,
-        )
+        const pass = statuses.every((status) => {
+          const matchesExpected = expected ? expected.includes(status) : status < 400
+          return matchesExpected && !rejected.has(status)
+        })
         return { pass, actual: statuses, detail: pass ? 'Matching HTTP statuses satisfied the assertion.' : 'Matching HTTP response included an unexpected status.' }
       }
       case 'consoleErrorCount': {
@@ -44,12 +45,23 @@ export async function evaluateAssertion(assertion: Assertion, context: Assertion
       }
       default:
         if (!context.page) return failed(undefined, 'This assertion requires an active browser page.')
-        return evaluatePageAssertion(assertion, context.page, context.facts)
+        if (
+          assertion.type === 'elementState' &&
+          (assertion.state === 'checked' || assertion.state === 'unchecked') &&
+          assertion.target.role !== 'checkbox' &&
+          assertion.target.role !== 'radio'
+        ) {
+          return failed(
+            { role: assertion.target.role, state: assertion.state },
+            `The "${assertion.state}" state requires a checkbox or radio role; received "${assertion.target.role}".`,
+          )
+        }
+        return await evaluatePageAssertion(assertion, context.page, context.facts)
     }
   } catch (error) {
     return failed(
-      error instanceof Error ? error.message : 'Assertion evaluation failed.',
-      `Assertion "${assertion.type}" could not be evaluated.`,
+      undefined,
+      `Assertion "${assertion.type}" could not be evaluated: ${error instanceof Error ? error.message : 'unknown error'}`,
     )
   }
 }
