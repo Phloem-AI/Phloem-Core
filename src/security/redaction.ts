@@ -12,10 +12,11 @@ export function extractSensitiveValues(brief: string): string[] {
   return [...values]
 }
 
-export function redactText(value: string, secrets: readonly string[] = []): string {
+export function redactText(value: string, secrets: readonly string[] = [], maxLength?: number): string {
   let redacted = value
   for (const secret of secrets) {
     if (secret.length >= 3) redacted = redacted.replaceAll(secret, '[redacted]')
   }
-  return redacted.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ').slice(0, 1_000)
+  redacted = redacted.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ')
+  return maxLength === undefined ? redacted : redacted.slice(0, maxLength)
 }

@@ -7,3 +7,9 @@ test('credential-like brief values and email addresses are found and redacted fr
   assert.deepEqual(values, ['sample-user', 'demo-pass', 'qa@example.test'])
   assert.equal(redactText('Signed in as sample-user with demo-pass', values), 'Signed in as [redacted] with [redacted]')
 })
+
+test('redaction preserves long content unless the caller explicitly requests a cap', () => {
+  const value = 'x'.repeat(2_048)
+  assert.equal(redactText(value).length, 2_048)
+  assert.equal(redactText(value, [], 300).length, 300)
+})

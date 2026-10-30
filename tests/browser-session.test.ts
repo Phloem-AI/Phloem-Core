@@ -46,11 +46,16 @@ test('Chromium snapshots accessible UI, redacts sensitive fields, and executes a
     const initialAssertions = [
       AssertionSchema.parse({ type: 'elementVisible', target: { role: 'heading', name: 'Demo shop' }, timeoutMs: 0 }),
       AssertionSchema.parse({ type: 'textVisible', text: 'Cart is empty', timeoutMs: 0 }),
+      AssertionSchema.parse({
+        type: 'elementState',
+        target: { role: 'button', name: 'Add to cart' },
+        state: 'checked',
+        timeoutMs: 0,
+      }),
     ]
-    assert.deepEqual(
-      (await evaluateAssertions(initialAssertions, { page: session.assertionPage, facts: session.facts })).map((result) => result.pass),
-      [true, true],
-    )
+    const initialResults = await evaluateAssertions(initialAssertions, { page: session.assertionPage, facts: session.facts })
+    assert.deepEqual(initialResults.map((result) => result.pass), [true, true, false])
+    assert.match(initialResults[2]?.detail ?? '', /requires a checkbox or radio role/)
 
     const operation = { type: 'click', target: { role: 'button', name: 'Add to cart', exact: true } } as const
     await session.execute(operation)
@@ -74,43 +79,6 @@ test('Chromium blocks navigation to an origin not named in the brief', async (co
     response.end('<!doctype html><html><body><h1>Named external destination</h1></body></html>')
   })
 
-  test('session taps record page errors, console warnings, and HTTP failures', async (context) => {
-    const server = createServer((request, response) => {
-      if (request.url === '/api/failure') {
-        response.writeHead(500, { 'content-type': 'text/plain' })
-        response.end('failed')
-        return
-      }
-      response.writeHead(200, { 'content-type': 'text/html' })
-      response.end(`<!doctype html><html><body>
-        <h1>Instrumentation fixture</h1>
-        <script>
-          console.warn('fixture warning');
-          console.error('fixture console error');
-          fetch('/api/failure');
-          setTimeout(() => { throw new Error('fixture page error'); }, 0);
-        </script>
-      </body></html>`)
-    })
-    const baseUrl = await listen(server)
-    context.after(() => close(server))
-    const websiteUrl = parseWebsiteUrl(baseUrl)
-    const session = await BrowserSession.open({
-      startUrl: websiteUrl,
-      navigationPolicy: createNavigationPolicy(websiteUrl),
-    })
-
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 200))
-      const kinds = session.facts.all().map((fact) => fact.kind)
-      assert.ok(kinds.includes('pageerror'))
-      assert.ok(kinds.includes('console'))
-      assert.ok(session.facts.all().some((fact) => fact.kind === 'http' && fact.status === 500))
-      assert.ok(session.facts.all().some((fact) => fact.kind === 'console' && fact.level === 'warning'))
-    } finally {
-      await session.close()
-    }
-  })
   const externalUrl = await listen(externalServer)
   context.after(() => close(externalServer))
 
@@ -151,5 +119,98 @@ test('Chromium blocks navigation to an origin not named in the brief', async (co
     assert.equal(externalRequests, 1)
   } finally {
     await allowedSession.close()
+  }
+})
+
+test('session taps record page errors, console warnings, and HTTP failures', async (context) => {
+  const server = createServer((request, response) => {
+    if (request.url === '/api/failure') {
+      response.writeHead(500, { 'content-type': 'text/plain' })
+      response.end('failed')
+      return
+    }
+    response.writeHead(200, { 'content-type': 'text/html' })
+    response.end(`<!doctype html><html><body>
+      <h1>Instrumentation fixture</h1>
+      <script>
+        console.warn('fixture warning');
+        console.error('fixture console error');
+        fetch('/api/failure');
+        setTimeout(() => { throw new Error('fixture page error'); }, 0);
+      </script>
+    </body></html>`)
+  })
+
+  const baseUrl = await listen(server)
+  context.after(() => close(server))
+  const websiteUrl = parseWebsiteUrl(baseUrl)
+  const session = await BrowserSession.open({
+    startUrl: websiteUrl,
+    navigationPolicy: createNavigationPolicy(websiteUrl),
+  })
+
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    const kinds = session.facts.all().map((fact) => fact.kind)
+    assert.ok(kinds.includes('pageerror'))
+    assert.ok(kinds.includes('console'))
+    assert.ok(session.facts.all().some((fact) => fact.kind === 'http' && fact.status === 500))
+    assert.ok(session.facts.all().some((fact) => fact.kind === 'console' && fact.level === 'warning'))
+  } finally {
+    await session.close()
+  }
+})
+
+test('observe truncation flags reflect content beyond configured caps', async (context) => {
+  const longText = 'a'.repeat(8_100)
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html' })
+    response.end(`<!doctype html><html><body>${longText}</body></html>`)
+  })
+  const baseUrl = await listen(server)
+  context.after(() => close(server))
+  const startUrl = parseWebsiteUrl(baseUrl)
+  const session = await BrowserSession.open({
+    startUrl,
+    navigationPolicy: createNavigationPolicy(startUrl),
+  })
+  try {
+    const observation = JSON.parse(await session.observe()) as { truncated: { visibleText: boolean } }
+    assert.equal(observation.truncated.visibleText, true)
+  } finally {
+    await session.close()
+  }
+})
+
+test('a later dialog fact does not rewrite the preceding action result', async (context) => {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html' })
+    response.end(`<!doctype html><html><body>
+      <button>Open dialog</button>
+      <script>
+        document.querySelector('button').addEventListener('click', () => {
+          setTimeout(() => alert('fixture dialog'), 50);
+        });
+      </script>
+    </body></html>`)
+  })
+  const baseUrl = await listen(server)
+  context.after(() => close(server))
+  const startUrl = parseWebsiteUrl(baseUrl)
+  const session = await BrowserSession.open({
+    startUrl,
+    navigationPolicy: createNavigationPolicy(startUrl),
+  })
+  try {
+    await session.execute({ type: 'click', target: { role: 'button', name: 'Open dialog', exact: true } })
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const observation = JSON.parse(await session.observe()) as {
+      actionStatus: { ok: boolean } | undefined
+      facts: { counts: { dialog: number } }
+    }
+    assert.equal(observation.actionStatus?.ok, true)
+    assert.equal(observation.facts.counts.dialog, 1)
+  } finally {
+    await session.close()
   }
 })
