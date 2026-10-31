@@ -182,6 +182,31 @@ test('observe truncation flags reflect content beyond configured caps', async (c
   }
 })
 
+test('observe can wait for delayed SPA content before taking its snapshot', async (context) => {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html' })
+    response.end(`<!doctype html><html><body>
+      <main id="app">Loading...</main>
+      <script>setTimeout(() => { document.querySelector('#app').textContent = 'Dynamically loaded content'; }, 300)</script>
+    </body></html>`)
+  })
+  const baseUrl = await listen(server)
+  context.after(() => close(server))
+  const startUrl = parseWebsiteUrl(baseUrl)
+  const session = await BrowserSession.open({
+    startUrl,
+    navigationPolicy: createNavigationPolicy(startUrl),
+  })
+  try {
+    const immediate = JSON.parse(await session.observe()) as { visibleText: string }
+    assert.match(immediate.visibleText, /Loading/)
+    const afterWait = JSON.parse(await session.observe(500)) as { visibleText: string }
+    assert.match(afterWait.visibleText, /Dynamically loaded content/)
+  } finally {
+    await session.close()
+  }
+})
+
 test('a later dialog fact does not rewrite the preceding action result', async (context) => {
   const server = createServer((_request, response) => {
     response.writeHead(200, { 'content-type': 'text/html' })

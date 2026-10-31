@@ -6,6 +6,7 @@ import { redactText } from '../security/redaction.js'
 import { attachPageTaps, FactStore } from '../instrument/taps.js'
 
 const MAX_SNAPSHOT_LENGTH = 30_000
+const MAX_OBSERVATION_WAIT_MS = 60_000
 
 export class BrowserOperationError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -117,10 +118,15 @@ export class BrowserSession {
     return this.page
   }
 
-  async observe(): Promise<string> {
+  async observe(waitMs = 0): Promise<string> {
     this.assertUsable()
+    if (!Number.isInteger(waitMs) || waitMs < 0 || waitMs > MAX_OBSERVATION_WAIT_MS) {
+      throw new BrowserOperationError(`Observation wait must be an integer between 0 and ${MAX_OBSERVATION_WAIT_MS} milliseconds.`)
+    }
 
     try {
+      if (waitMs > 0) await this.page.waitForTimeout(waitMs)
+      this.assertUsable()
       const [title, ariaTree, visibleText] = await Promise.all([
         this.page.title().catch(() => ''),
         this.page.locator('body').ariaSnapshot({ timeout: 5_000 }).catch(() => ''),
