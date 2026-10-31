@@ -209,18 +209,19 @@ server.registerTool(
     description: 'Summarize observed browser health and check a bounded set of same-origin resources; optionally run axe-core.',
     inputSchema: z.object({
       sessionId: z.string().uuid().optional(),
-      url: z.string().min(1).max(2048).optional(),
+      url: z.string().max(2048).optional(),
       includeA11y: z.boolean().default(false),
       maxPages: z.number().int().min(1).max(HEALTH_SWEEP_MAX).default(20),
     }).strict(),
   },
   async ({ sessionId, url, includeA11y, maxPages }) => safeResult('health_sweep', sessionId, async () => {
-    if (!sessionId && !url) throw new Error('Provide either sessionId or url.')
-    if (sessionId && url) throw new Error('Provide sessionId or url, not both.')
+    const targetUrl = url?.trim() || undefined
+    if (!sessionId && !targetUrl) throw new Error('Provide either sessionId or url.')
+    if (sessionId && targetUrl) throw new Error('Provide sessionId or url, not both.')
     const throwaway = !sessionId
     const managed = sessionId
       ? await sessions.get(sessionId)
-      : await sessions.start({ url: requireProvidedUrl(url) })
+      : await sessions.start({ url: requireProvidedUrl(targetUrl) })
     try {
       return jsonResult(await buildHealthReport(managed, maxPages, includeA11y))
     } finally {
