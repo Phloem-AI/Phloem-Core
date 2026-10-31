@@ -28,8 +28,8 @@ server writes protocol data only to stdout and sends diagnostics to stderr.
 
 ## Tools
 
-- `session_start`: open a persistent Chromium session with a URL, viewport/device, optional origin allowlist, and optional workspace storage state.
-- `observe`: get a redacted page observation and new browser facts.
+- `session_start`: open a persistent Chromium session with a URL, viewport/device, optional origin allowlist, and optional workspace storage state. The initial observation waits up to 15 seconds by default for delayed page content; set `initialWaitMs` to adjust it.
+- `observe`: wait up to 15 seconds by default for delayed page content, then get a redacted page observation and new browser facts. Set `waitMs` to `0` for an immediate snapshot.
 - `browser_act`: perform one allowlisted browser operation.
 - `assert`: evaluate page-state or recorded-fact assertions.
 - `session_end`: close a session and return its final in-memory fact roll-up.

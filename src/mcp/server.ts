@@ -13,6 +13,8 @@ import { createNavigationPolicy, parseWebsiteUrl } from '../policy/url-policy.js
 const MAX_SESSIONS = 4
 const SESSION_TTL_MS = 30 * 60 * 1000
 const HEALTH_SWEEP_MAX = 50
+const DEFAULT_OBSERVATION_WAIT_MS = 15_000
+const MAX_OBSERVATION_WAIT_MS = 60_000
 
 type ManagedSession = {
   id: string
@@ -118,6 +120,7 @@ server.registerTool(
     description: 'Start a persistent local Chromium session and return the first redacted page observation.',
     inputSchema: z.object({
       url: z.string().min(1).max(2048),
+      initialWaitMs: z.number().int().min(0).max(MAX_OBSERVATION_WAIT_MS).default(DEFAULT_OBSERVATION_WAIT_MS),
       viewport: z.object({ width: z.number().int().min(320).max(7680), height: z.number().int().min(240).max(4320) }).nullable().optional(),
       deviceName: z.string().min(1).max(100).nullable().optional(),
       origins: z.array(z.string().min(1).max(2048)).max(20).optional(),
@@ -133,7 +136,11 @@ server.registerTool(
       ...(args.storageStatePath !== undefined ? { storageStatePath: args.storageStatePath } : {}),
     })
     try {
-      return jsonResult({ sessionId: managed.id, startedAt: managed.startedAt, observation: JSON.parse(await managed.browser.observe()) as unknown })
+      return jsonResult({
+        sessionId: managed.id,
+        startedAt: managed.startedAt,
+        observation: JSON.parse(await managed.browser.observe(args.initialWaitMs)) as unknown,
+      })
     } catch (error) {
       await sessions.end(managed.id).catch(() => undefined)
       throw error
@@ -142,11 +149,14 @@ server.registerTool(
 )
 
 server.registerTool('observe', {
-  description: 'Return the current redacted page state and newly recorded browser facts.',
-  inputSchema: z.object({ sessionId: z.string().uuid() }).strict(),
-}, async ({ sessionId }) => safeResult('observe', sessionId, async () => {
+  description: 'Wait briefly for dynamic page content, then return the current redacted page state and new browser facts. Defaults to a 15-second wait; set waitMs to 0 for an immediate snapshot.',
+  inputSchema: z.object({
+    sessionId: z.string().uuid(),
+    waitMs: z.number().int().min(0).max(MAX_OBSERVATION_WAIT_MS).default(DEFAULT_OBSERVATION_WAIT_MS),
+  }).strict(),
+}, async ({ sessionId, waitMs }) => safeResult('observe', sessionId, async () => {
   const managed = await sessions.get(sessionId)
-  return jsonResult(JSON.parse(await managed.browser.observe()) as unknown)
+  return jsonResult(JSON.parse(await managed.browser.observe(waitMs)) as unknown)
 }))
 
 server.registerTool('browser_act', {
