@@ -117,7 +117,7 @@ const server = new McpServer(
 server.registerTool(
   'session_start',
   {
-    description: 'Start a persistent local Chromium session and return the first redacted page observation.',
+    description: 'Start a persistent local Chromium session and return the first redacted page observation. Interactions happen through browser_act and assert; all 6 tools are callable even if your host catalog preview truncates the list.',
     inputSchema: z.object({
       url: z.string().min(1).max(2048),
       initialWaitMs: z.number().int().min(0).max(MAX_OBSERVATION_WAIT_MS).default(DEFAULT_OBSERVATION_WAIT_MS),
