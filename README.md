@@ -2,6 +2,24 @@
 
 Phloem is a local stdio MCP server that gives a coding agent controlled access to Playwright and Chromium. The agent plans test flows and interprets results; Phloem records browser facts and evaluates explicit assertions without making model calls or reading application source code.
 
+## Install
+
+Configure your MCP host to launch Phloem from npm with `npx`:
+
+```json
+{
+  "mcpServers": {
+    "phloem-ai": {
+      "command": "npx",
+      "args": ["-y", "phloem-ai"],
+      "cwd": "<website-workspace>"
+    }
+  }
+}
+```
+
+The first launch installs the package and Playwright's Chromium browser.
+
 ## Development setup
 
 ```sh
@@ -9,21 +27,7 @@ npm install
 npm run build
 ```
 
-Configure an MCP host to launch the built entry point with Node. For example:
-
-```json
-{
-  "mcpServers": {
-    "phloem": {
-      "command": "node",
-      "args": ["<absolute-path-to-phloem>/dist/index.js"],
-      "cwd": "<website-workspace>"
-    }
-  }
-}
-```
-
-During development, `npm start` starts the same stdio server from TypeScript. The
+For local development, configure Node to launch `dist/index.js`. During development, `npm start` starts the same stdio server from TypeScript. The
 server writes protocol data only to stdout and sends diagnostics to stderr.
 
 ## Tools

@@ -1,5 +1,5 @@
 {
-  "name": "phloem",
+  "name": "phloem-ai",
   "version": "0.1.1",
   "description": "A stdio MCP server that gives coding agents measured Playwright browser tools",
   "main": "dist/index.js",
@@ -12,7 +12,8 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "tsx --test \"tests/**/*.test.ts\"",
-    "postinstall": "playwright install chromium"
+    "postinstall": "playwright install chromium",
+    "prepack": "npm run build"
   },
   "repository": {
     "type": "git",
@@ -39,5 +40,13 @@
   "bugs": {
     "url": "https://github.com/Phloem-AI/Phloem-Core/issues"
   },
-  "homepage": "https://github.com/Phloem-AI/Phloem-Core#readme"
+  "homepage": "https://github.com/Phloem-AI/Phloem-Core#readme",
+  "bin": {
+    "phloem-ai": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ]
 }
