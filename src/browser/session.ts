@@ -22,6 +22,13 @@ export class BrowserRuntimeError extends Error {
   }
 }
 
+export interface BrowserEvidenceOptions {
+  /** Absolute file path where Playwright's trace.zip is written on flushEvidence(). */
+  tracePath?: string
+  /** Absolute file path where the context HAR is written when the context closes. */
+  harPath?: string
+}
+
 export interface BrowserSessionOptions {
   startUrl: URL
   navigationPolicy: NavigationPolicy
@@ -31,6 +38,7 @@ export interface BrowserSessionOptions {
   viewport?: { width: number; height: number } | null
   deviceName?: string | null
   storageStatePath?: string
+  evidence?: BrowserEvidenceOptions
 }
 
 type CachedDocumentResponse = {
@@ -46,6 +54,7 @@ export class BrowserSession {
   private readonly navigationPolicy: NavigationPolicy
   private readonly signal: AbortSignal | undefined
   private readonly knownSensitiveValues = new Set<string>()
+  private readonly sensitiveLocators: Array<ReturnType<BrowserSession['target']>> = []
   private readonly factStore: FactStore
   private readonly prefetchedDocuments = new Map<string, CachedDocumentResponse>()
   private lastAriaSnapshot = ''
@@ -54,6 +63,8 @@ export class BrowserSession {
   private lastActionStatus: { ok: boolean; detail: string } | undefined
   private blockedNavigation: string | undefined
   private redirectedDocumentUrl: string | undefined
+  private readonly evidence: BrowserEvidenceOptions | undefined
+  private tracing = false
   private closed = false
 
   private constructor(
@@ -61,12 +72,15 @@ export class BrowserSession {
     context: BrowserContext,
     page: Page,
     options: BrowserSessionOptions,
+    tracingStarted: boolean = false,
   ) {
     this.browser = browser
     this.context = context
     this.page = page
     this.navigationPolicy = options.navigationPolicy
     this.signal = options.signal
+    this.evidence = options.evidence
+    this.tracing = tracingStarted
     for (const value of options.sensitiveValues ?? []) this.knownSensitiveValues.add(value)
     this.factStore = new FactStore(() => [...this.knownSensitiveValues])
     attachPageTaps(page, this.factStore)
@@ -80,6 +94,7 @@ export class BrowserSession {
 
   static async open(options: BrowserSessionOptions): Promise<BrowserSession> {
     let browser: Browser | undefined
+    let tracingStarted = false
     try {
       browser = await chromium.launch({ headless: options.headless ?? true, chromiumSandbox: true })
       const device = options.deviceName ? devices[options.deviceName] : undefined
@@ -90,11 +105,18 @@ export class BrowserSession {
         ...deviceOptions,
         ...(options.viewport !== undefined ? { viewport: options.viewport } : {}),
         ...(options.storageStatePath ? { storageState: options.storageStatePath } : {}),
+        ...(options.evidence?.harPath ? { recordHar: { path: options.evidence.harPath } } : {}),
       })
-      const page = await context.newPage()
+      if (options.evidence?.tracePath) {
+        // Text snapshots are redacted from the trace archive at finalization.
+        // Omitting trace screenshots avoids retaining sensitive rendered values
+        // in binary PNG entries that cannot be text-redacted.
+        await context.tracing.start({ screenshots: false, snapshots: true, sources: false })
+        tracingStarted = true
+      }      const page = await context.newPage()
       page.setDefaultTimeout(5_000)
       page.setDefaultNavigationTimeout(15_000)
-      const session = new BrowserSession(browser, context, page, options)
+      const session = new BrowserSession(browser, context, page, options, tracingStarted)
       await session.installNavigationGuard()
       await session.execute({ type: 'navigate', url: options.startUrl.href })
       return session
@@ -111,6 +133,27 @@ export class BrowserSession {
 
   get facts(): FactStore {
     return this.factStore
+  }
+
+  get sensitiveValues(): readonly string[] {
+    return [...this.knownSensitiveValues]
+  }
+
+  /** Write Playwright's trace.zip (screenshot + DOM snapshots); returns true when a trace was written. */
+  async flushEvidence(): Promise<boolean> {
+    if (!this.evidence?.tracePath || !this.tracing) return false
+    this.assertUsable()
+    await this.context.tracing.stop({ path: this.evidence.tracePath })
+    this.tracing = false
+    return true
+  }
+
+  async screenshot(): Promise<Buffer> {
+    this.assertUsable()
+    return this.page.screenshot({
+      type: 'png',
+      ...(this.sensitiveLocators.length > 0 ? { mask: this.sensitiveLocators } : {}),
+    })
   }
 
   get assertionPage(): Page {
@@ -208,8 +251,18 @@ export class BrowserSession {
           await this.target(operation.target).uncheck()
           break
         case 'fill':
-          if (isSensitiveLocator(operation.target.name)) this.knownSensitiveValues.add(operation.value)
-          await this.target(operation.target).fill(operation.value)
+          {
+            const target = this.target(operation.target)
+            const inputType = await target.getAttribute('type').catch(() => null)
+            const sensitive = isSensitiveLocator(operation.target.name)
+              || inputType?.toLowerCase() === 'password'
+              || [...this.knownSensitiveValues].some((secret) => secret.length > 0 && operation.value.includes(secret))
+            if (sensitive) {
+            this.knownSensitiveValues.add(operation.value)
+              if (!this.sensitiveLocators.includes(target)) this.sensitiveLocators.push(target)
+            }
+            await target.fill(operation.value)
+          }
           operationDescription = `Filled the ${operation.target.role} named "${operation.target.name}" with [value omitted].`
           break
         case 'select':

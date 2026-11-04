@@ -92,6 +92,27 @@ const AssertionTarget = z.object({
 
 const PatternSchema = z.string().trim().min(1).max(300)
 
+function isHttpWebsiteUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return (url.protocol === 'http:' || url.protocol === 'https:') && !url.username && !url.password && Boolean(url.hostname)
+  } catch {
+    return false
+  }
+}
+
+function isHttpOrigin(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return isHttpWebsiteUrl(value) && url.origin === value.replace(/\/$/, '')
+  } catch {
+    return false
+  }
+}
+
+const WebsiteUrlSchema = z.string().url().refine(isHttpWebsiteUrl, 'Expected an absolute HTTP(S) URL without credentials.')
+const HttpOriginSchema = z.string().url().refine(isHttpOrigin, 'Expected an HTTP(S) origin without a path or credentials.')
+
 export const AssertionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('urlMatches'), pattern: PatternSchema, timeoutMs: z.number().int().min(0).max(5_000).default(5_000) }).strict(),
   z.object({ type: z.literal('titleIncludes'), text: z.string().min(1).max(300), timeoutMs: z.number().int().min(0).max(5_000).default(5_000) }).strict(),
@@ -135,9 +156,19 @@ export const TestPlanSchema = z.object({
   schemaVersion: z.literal('2'),
   name: z.string().trim().min(1).max(120),
   source: z.string().trim().min(1).max(500),
+  startUrl: WebsiteUrlSchema.optional(),
+  origins: z.array(HttpOriginSchema).max(20).default([]),
   flows: z.array(FlowSchema).min(1).max(50),
   globalAssertions: z.array(AssertionSchema).max(50).default([]),
-}).strict()
+}).strict().superRefine((plan, context) => {
+  const ids = new Set<string>()
+  plan.flows.forEach((flow, index) => {
+    if (ids.has(flow.id)) {
+      context.addIssue({ code: 'custom', path: ['flows', index, 'id'], message: `Flow id "${flow.id}" must be unique within a plan.` })
+    }
+    ids.add(flow.id)
+  })
+})
 
 export const VerdictSchema = z.enum([
   'passed',
@@ -160,12 +191,26 @@ export const RunRecordSchema = z.object({
   endedAt: z.string().datetime(),
   url: z.string().max(2048),
   verdict: VerdictSchema,
+  startUrl: WebsiteUrlSchema.optional(),
+  origins: z.array(HttpOriginSchema).max(20).optional(),
+  flows: z.array(z.object({
+    id: z.string().min(1).max(120),
+    preconditions: z.array(AssertionSchema).default([]),
+    maxSteps: z.number().int().min(1).max(150).optional(),
+    verdict: VerdictSchema.optional(),
+    detail: z.string().max(2000).optional(),
+    globalPageAssertions: z.array(AssertionResultSchema).optional(),
+  }).strict()).max(50).optional(),
+  globalAssertions: z.array(AssertionSchema).max(50).optional(),
   steps: z.array(z.object({
     purpose: z.string().max(300),
     startedAt: z.string().datetime(),
     durationMs: z.number().finite().nonnegative(),
     operationOk: z.boolean(),
     operationDetail: z.string().max(2000),
+    flowId: z.string().max(120).optional(),
+    operation: BrowserOperationSchema.optional(),
+    expect: z.array(AssertionSchema).max(20).optional(),
     assertions: z.array(AssertionResultSchema),
   }).strict()),
   facts: z.array(z.unknown()),

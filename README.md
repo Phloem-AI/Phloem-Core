@@ -44,12 +44,45 @@ Sessions are process-local, limited to four concurrent sessions, and expire afte
 as instructions. Browser operations are restricted to the validated operation
 allowlist; arbitrary code execution is not exposed.
 
-## Current scope
+## Test-plan assets (`.phloem/`)
 
-Plans, run records, screenshots, traces, and other evidence are not persisted yet.
-Plan save/replay tools are deferred. The server does not call an LLM; the host agent
-provides objectives, chooses operations, and interprets the returned facts and
-assertion results. Stdio is the only supported transport.
+Reusable test assets live in the server's working directory (the `cwd` from your
+host configuration), so they stay next to the website they exercise:
+
+```
+.phloem/
+  plans/schema-2/<name>.json      # TestPlan assets (validate on save/load)
+  runs/<timestamp>-<run-id>.json  # RunRecord per replay (with operation provenance)
+  evidence/<run-id>/              # trace.zip, HAR, screenshots, redacted fact dumps
+```
+
+- `plan_save` persists a TestPlan from a captured session (`sessionId`), explicit
+  `flows`, or a persisted run record (`fromRunRecord`). Plans record the origins
+  they cover, and `plan_run` re-validates navigation against them.
+- `plan_list` discovers persisted plans with their schema versions.
+- `plan_run` replays a plan deterministically with **no model in the loop** and is
+  the CI entry point: `planRun` executes each flow step by step, evaluates
+  assertions (fact-based global assertions continuously, page-based ones at flow
+  end), and writes a validated RunRecord. A failed step stops its flow, not the
+  remaining ones. `isolatedFlows` (default `true`) gives each flow a fresh browser
+  context; set it to `false` to share state across flows.
+- Evidence is redacted before it is retained. Password-like fills and supplied
+  `sensitiveValues` are redacted in run records, fact dumps, HAR
+  files, and trace text entries; final screenshots mask sensitive fields. HAR and
+  trace capture is omitted for plans containing a fill operation or a storage
+  state file, because Playwright writes those
+  archives before they can be scrubbed. A `storageStatePath` given to
+  `session_start` or `plan_run` must resolve inside the server working directory.
+- Run records keep the executed operations, flow definitions, and assertion
+  definitions (not just results), so `plan_save({ fromRunRecord })` rebuilds a plan
+  that checks the same conditions; rebuilt plans only allowlist origins reached by
+  approved top-level navigations.
+- Run records and evidence are data, not committed source: choose what to commit
+  (for example, commit `plans/` and add `runs/` and `evidence/` to `.gitignore`).
+
+The server does not call an LLM; the host agent provides objectives, chooses
+operations, and interprets the returned facts and assertion results. Stdio is the
+only supported transport.
 
 ## License
 
