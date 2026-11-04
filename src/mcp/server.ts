@@ -223,13 +223,15 @@ server.registerTool('plan_save', {
     source: z.string().trim().min(1).max(500).default('Captured from Phloem session'),
     startUrl: z.string().url().optional(),
     origins: z.array(z.string().url()).max(20).optional(),
+    globalAssertions: z.array(AssertionSchema).max(50).optional(),
     sensitiveValues: z.array(z.string().min(3).max(1000)).max(50).optional(),
   }).strict().refine(v => [v.sessionId, v.flows, v.fromRunRecord].filter((value) => value !== undefined && value !== null).length === 1, 'Provide exactly one of sessionId, flows, or fromRunRecord.'),
-}, async ({ name, sessionId, flows, fromRunRecord, source, startUrl, origins, sensitiveValues }) => safeResult('plan_save', sessionId, async () => {
+}, async ({ name, sessionId, flows, fromRunRecord, source, startUrl, origins, globalAssertions, sensitiveValues }) => safeResult('plan_save', sessionId, async () => {
   const secrets = sensitiveValues ?? []
   if (fromRunRecord) {
     const { record, path } = await loadRunRecord(fromRunRecord)
-    const recording = buildPlanFromRunRecord(record, name, source)
+    const rebuilt = buildPlanFromRunRecord(record, name, source)
+    const recording = globalAssertions ? { ...rebuilt, globalAssertions } : rebuilt
     const saved = await savePlan(recording, secrets)
     return jsonResult({
       path: saved.path,
@@ -238,7 +240,7 @@ server.registerTool('plan_save', {
     })
   }
   if (flows) {
-    const recording = { schemaVersion: '2' as const, name, source, ...(startUrl ? { startUrl } : {}), origins: origins ?? [], flows, globalAssertions: [] }
+    const recording = { schemaVersion: '2' as const, name, source, ...(startUrl ? { startUrl } : {}), origins: origins ?? [], flows, globalAssertions: globalAssertions ?? [] }
     const saved = await savePlan(recording, secrets)
     return jsonResult({ path: saved.path, summary: { name, source, flows: flows.length, steps: flows.reduce((sum, flow) => sum + flow.steps.length, 0), origins: recording.origins, startUrl: recording.startUrl, schemaVersion: recording.schemaVersion } })
   }
@@ -252,9 +254,12 @@ server.registerTool('plan_save', {
     startUrl: managed.startUrl.href,
     origins: sessionOrigins,
     flows: [{ id: 'captured-session', preconditions: [], steps: managed.history }],
-    globalAssertions: [],
+    globalAssertions: globalAssertions ?? [],
   }
-  const saved = await savePlan(recording, [...managed.sensitiveValues, ...secrets])
+  // The live set includes values entered into password-like fields during the
+  // session; the static start-time list alone would leak them into the plan.
+  const liveSecrets = [...new Set([...managed.sensitiveValues, ...managed.browser.sensitiveValues, ...secrets])]
+  const saved = await savePlan(recording, liveSecrets)
   return jsonResult({
     path: saved.path,
     summary: { name, source, flows: 1, steps: managed.history.length, origins: sessionOrigins, startUrl: managed.startUrl.href, schemaVersion: '2' },
@@ -264,7 +269,7 @@ server.registerTool('plan_save', {
 server.registerTool('plan_list', { description: 'List persisted TestPlans in the workspace.', inputSchema: z.object({}).strict() }, async () => safeResult('plan_list', undefined, async () => jsonResult(await listPlans())))
 
 server.registerTool('plan_run', {
-  description: 'Replay a saved TestPlan deterministically with no model in the loop: act, evaluate assertions, next. Writes a validated RunRecord and (by default) redacted evidence (trace.zip, HAR, screenshots, fact dumps) under .phloem/evidence/. The plan is the spec; it is not re-negotiated.',
+  description: 'Replay a saved TestPlan deterministically with no model in the loop: act, evaluate assertions, next. Writes a validated RunRecord and redacted evidence under .phloem/evidence/. HAR and trace archives are omitted when the plan contains fill operations, sensitiveValues, or storage state. The plan is the spec; it is not re-negotiated.',
   inputSchema: z.object({
     planPath: z.string().min(1).max(1000).optional(),
     planName: z.string().min(1).max(120).optional(),

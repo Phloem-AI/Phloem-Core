@@ -66,11 +66,17 @@ host configuration), so they stay next to the website they exercise:
   end), and writes a validated RunRecord. A failed step stops its flow, not the
   remaining ones. `isolatedFlows` (default `true`) gives each flow a fresh browser
   context; set it to `false` to share state across flows.
-- Every evidence write passes through redaction. Browser operations that fill
-  password-like fields, plus any `sensitiveValues` you pass to `session_start` or
-  `plan_run`, are masked in run records, fact dumps, and HAR files before they hit
-  disk. `trace.zip` is a binary Playwright artifact and is not text-redacted; fill
-  values are masked by the browser session itself.
+- Evidence is redacted before it is retained. Password-like fills and supplied
+  `sensitiveValues` are redacted in saved plans, run records, fact dumps, HAR
+  files, and trace text entries; final screenshots mask sensitive fields. HAR and
+  trace capture is omitted for plans containing a fill operation, supplied
+  sensitive values, or a storage state file, because Playwright writes those
+  archives before they can be scrubbed. A `storageStatePath` given to
+  `session_start` or `plan_run` must resolve inside the server working directory.
+- Run records keep the executed operations, flow definitions, and assertion
+  definitions (not just results), so `plan_save({ fromRunRecord })` rebuilds a plan
+  that checks the same conditions; rebuilt plans only allowlist origins reached by
+  approved top-level navigations.
 - Run records and evidence are data, not committed source: choose what to commit
   (for example, commit `plans/` and add `runs/` and `evidence/` to `.gitignore`).
 

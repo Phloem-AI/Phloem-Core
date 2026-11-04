@@ -15,6 +15,7 @@ import type { BrowserFact } from '../instrument/taps.js'
 import { createNavigationPolicy, parseWebsiteUrl } from '../policy/url-policy.js'
 import { resolveWorkspacePath } from '../security/workspace.js'
 import {
+  ensureEvidenceDirectory,
   evidenceAbsolutePath,
   evidenceRelativePath,
   redactEvidenceArchive,
@@ -74,6 +75,10 @@ export async function runPlan(options: PlanRunOptions): Promise<PlanRunResult> {
   // Validate the storage state boundary up front: a plan run must never read a
   // file outside the server working directory.
   const storageStatePath = options.storageStatePath ? await resolveWorkspacePath(options.storageStatePath) : undefined
+  // Playwright writes HAR and trace data before post-processing. Avoid creating
+  // raw archives for runs that can carry user values or authenticated state.
+  const hasFillOperation = plan.flows.some((flow) => flow.steps.some((step) => step.op.type === 'fill'))
+  const captureArchives = captureEvidence && !hasFillOperation && !storageStatePath && !(options.sensitiveValues?.length)
 
   const secrets = new Set<string>()
   const flows: FlowRunResult[] = []
@@ -114,8 +119,7 @@ export async function runPlan(options: PlanRunOptions): Promise<PlanRunResult> {
     }
 
     const sharedSession = !isolated && shared !== undefined ? shared : undefined
-    const evidence = sharedSession?.evidence
-      ?? flowEvidenceNames(sharedSession ? 'shared' : flow.id)
+    const evidence = sharedSession?.evidence ?? flowEvidenceNames(flow.id)
     let session: BrowserSession | undefined
     const freshlyOpened = sharedSession === undefined
     if (freshlyOpened) {
@@ -124,7 +128,7 @@ export async function runPlan(options: PlanRunOptions): Promise<PlanRunResult> {
           rawStartUrl,
           plan,
           runId,
-          captureEvidence,
+          captureEvidence: captureArchives,
           evidence,
           ...(storageStatePath ? { storageStatePath } : {}),
           ...(options.sensitiveValues ? { sensitiveValues: options.sensitiveValues } : {}),
@@ -200,10 +204,17 @@ export async function runPlan(options: PlanRunOptions): Promise<PlanRunResult> {
     endedAt: new Date().toISOString(),
     url: finalUrl,
     verdict,
-    flows: plan.flows.map((flow) => ({
+    startUrl: plan.startUrl ?? firstNavigateUrl(plan),
+    origins: plan.origins,
+    flows: plan.flows.map((flow, index) => ({
       id: flow.id,
       preconditions: flow.preconditions,
       ...(flow.maxSteps !== undefined ? { maxSteps: flow.maxSteps } : {}),
+      ...(flows[index] ? {
+        verdict: flows[index]!.verdict,
+        ...(flows[index]!.detail ? { detail: flows[index]!.detail } : {}),
+        globalPageAssertions: flows[index]!.globalPageAssertions,
+      } : {}),
     })),
     globalAssertions: plan.globalAssertions,
     steps: flows.flatMap((flow) => flow.steps),
@@ -279,6 +290,9 @@ async function executeFlow(
       operationDetail = errorMessage(error)
     }
     const assertions = operationOk ? await evaluateAssertions(step.expect, assertionContext) : []
+    const factResults = factBasedGlobals.length > 0
+      ? await evaluateAssertions(factBasedGlobals, assertionContext)
+      : []
     steps.push({
       purpose: step.purpose,
       startedAt,
@@ -293,6 +307,10 @@ async function executeFlow(
     if (!operationOk) {
       verdict = POLICY_BLOCKED_PATTERN.test(operationDetail) ? 'policy_blocked' : 'action_failed'
       reasons.push(`Step "${step.purpose}" failed: ${session.facts.redact(operationDetail).slice(0, 500)}`)
+      const failingFactAssertion = factResults.find((result) => !result.pass)
+      if (failingFactAssertion) {
+        reasons.push(`Global assertion also failed after step "${step.purpose}": ${describeFailure(failingFactAssertion)}`)
+      }
       break
     }
     const failingAssertion = assertions.find((result) => !result.pass)
@@ -301,14 +319,11 @@ async function executeFlow(
       reasons.push(`Step "${step.purpose}" assertion failed: ${describeFailure(failingAssertion)}`)
       break
     }
-    if (factBasedGlobals.length > 0) {
-      const factResults = await evaluateAssertions(factBasedGlobals, assertionContext)
-      const failingFactAssertion = factResults.find((result) => !result.pass)
-      if (failingFactAssertion) {
-        verdict = 'assertion_failed'
-        reasons.push(`Global assertion failed after step "${step.purpose}": ${describeFailure(failingFactAssertion)}`)
-        break
-      }
+    const failingFactAssertion = factResults.find((result) => !result.pass)
+    if (failingFactAssertion) {
+      verdict = 'assertion_failed'
+      reasons.push(`Global assertion failed after step "${step.purpose}": ${describeFailure(failingFactAssertion)}`)
+      break
     }
   }
 
@@ -350,6 +365,15 @@ function flowEvidenceNames(prefix: string): FlowEvidenceNames {
   return { har: `${prefix}.har`, trace: `${prefix}-trace.zip` }
 }
 
+function firstNavigateUrl(plan: TestPlan): string | undefined {
+  for (const flow of plan.flows) {
+    for (const step of flow.steps) {
+      if (step.op.type === 'navigate') return step.op.url
+    }
+  }
+  return undefined
+}
+
 function addSecrets(secrets: Set<string>, values: readonly string[]): void {
   for (const value of values) if (value.length >= 3) secrets.add(value)
 }
@@ -364,6 +388,7 @@ async function openSession(options: {
   sensitiveValues?: readonly string[] | undefined
 }): Promise<BrowserSession> {
   const startUrl = parseWebsiteUrl(options.rawStartUrl)
+  if (options.captureEvidence) await ensureEvidenceDirectory(options.runId)
   return BrowserSession.open({
     startUrl,
     navigationPolicy: createNavigationPolicy(startUrl, '', options.plan.origins),
@@ -417,13 +442,12 @@ async function closeSession(
   try {
     await session.close()
   } catch {
-    // Close failures must not mask the flow verdict; evidence below files may be partial.
-    return
+    // Close failures must not mask the flow verdict, but evidence is still
+    // redacted below whenever the files made it to disk.
   }
   if (traceWritten) {
     const tracePath = evidenceRelativePath(runId, evidence.trace)
-    await redactEvidenceArchive(tracePath, secrets)
-    evidencePaths.push(tracePath)
+    if (await redactEvidenceArchive(tracePath, secrets)) evidencePaths.push(tracePath)
   }
   const redacted = await redactEvidenceFile(harPath, secrets)
   if (redacted) evidencePaths.push(harPath)

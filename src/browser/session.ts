@@ -108,7 +108,10 @@ export class BrowserSession {
         ...(options.evidence?.harPath ? { recordHar: { path: options.evidence.harPath } } : {}),
       })
       if (options.evidence?.tracePath) {
-        await context.tracing.start({ screenshots: true, snapshots: true, sources: false })
+        // Text snapshots are redacted from the trace archive at finalization.
+        // Omitting trace screenshots avoids retaining sensitive rendered values
+        // in binary PNG entries that cannot be text-redacted.
+        await context.tracing.start({ screenshots: false, snapshots: true, sources: false })
         tracingStarted = true
       }      const page = await context.newPage()
       page.setDefaultTimeout(5_000)
@@ -248,11 +251,18 @@ export class BrowserSession {
           await this.target(operation.target).uncheck()
           break
         case 'fill':
-          if (isSensitiveLocator(operation.target.name)) {
+          {
+            const target = this.target(operation.target)
+            const inputType = await target.getAttribute('type').catch(() => null)
+            const sensitive = isSensitiveLocator(operation.target.name)
+              || inputType?.toLowerCase() === 'password'
+              || [...this.knownSensitiveValues].some((secret) => secret.length > 0 && operation.value.includes(secret))
+            if (sensitive) {
             this.knownSensitiveValues.add(operation.value)
-            this.sensitiveLocators.push(this.target(operation.target))
+              if (!this.sensitiveLocators.includes(target)) this.sensitiveLocators.push(target)
+            }
+            await target.fill(operation.value)
           }
-          await this.target(operation.target).fill(operation.value)
           operationDescription = `Filled the ${operation.target.role} named "${operation.target.name}" with [value omitted].`
           break
         case 'select':
