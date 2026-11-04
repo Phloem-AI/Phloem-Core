@@ -54,6 +54,7 @@ export class BrowserSession {
   private readonly navigationPolicy: NavigationPolicy
   private readonly signal: AbortSignal | undefined
   private readonly knownSensitiveValues = new Set<string>()
+  private readonly sensitiveLocators: Array<ReturnType<BrowserSession['target']>> = []
   private readonly factStore: FactStore
   private readonly prefetchedDocuments = new Map<string, CachedDocumentResponse>()
   private lastAriaSnapshot = ''
@@ -135,17 +136,21 @@ export class BrowserSession {
     return [...this.knownSensitiveValues]
   }
 
-  /** Write Playwright's trace.zip (screenshot + DOM snapshots) and finalize evidence. */
-  async flushEvidence(): Promise<void> {
-    if (!this.evidence?.tracePath || !this.tracing) return
+  /** Write Playwright's trace.zip (screenshot + DOM snapshots); returns true when a trace was written. */
+  async flushEvidence(): Promise<boolean> {
+    if (!this.evidence?.tracePath || !this.tracing) return false
     this.assertUsable()
     await this.context.tracing.stop({ path: this.evidence.tracePath })
     this.tracing = false
+    return true
   }
 
   async screenshot(): Promise<Buffer> {
     this.assertUsable()
-    return this.page.screenshot({ type: 'png' })
+    return this.page.screenshot({
+      type: 'png',
+      ...(this.sensitiveLocators.length > 0 ? { mask: this.sensitiveLocators } : {}),
+    })
   }
 
   get assertionPage(): Page {
@@ -243,7 +248,10 @@ export class BrowserSession {
           await this.target(operation.target).uncheck()
           break
         case 'fill':
-          if (isSensitiveLocator(operation.target.name)) this.knownSensitiveValues.add(operation.value)
+          if (isSensitiveLocator(operation.target.name)) {
+            this.knownSensitiveValues.add(operation.value)
+            this.sensitiveLocators.push(this.target(operation.target))
+          }
           await this.target(operation.target).fill(operation.value)
           operationDescription = `Filled the ${operation.target.role} named "${operation.target.name}" with [value omitted].`
           break

@@ -3,6 +3,7 @@ import { basename, join, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { BrowserOperationSchema, RunRecordSchema, TestPlanSchema, type BrowserOperation, type RunRecord, type TestPlan } from '../contracts.js'
 import { redactText } from '../security/redaction.js'
+import { redactZipArchive } from './redact-archive.js'
 
 function workspacePath(path: string): string {
   const root = resolve(process.cwd())
@@ -13,7 +14,9 @@ function workspacePath(path: string): string {
 
 export async function savePlan(plan: unknown, secrets: readonly string[] = []): Promise<{ path: string; plan: TestPlan }> {
   const parsed = TestPlanSchema.safeParse(plan)
-  if (!parsed.success) throw new Error('Invalid TestPlan: ' + parsed.error.issues.map(i => i.message).join('; '))
+  if (!parsed.success) {
+    throw new Error('Invalid TestPlan: ' + parsed.error.issues.map(describeIssue).join('; '))
+  }
   const directory = workspacePath('.phloem/plans/schema-2')
   await mkdir(directory, { recursive: true })
   const path = join(directory, safeName(parsed.data.name) + '.json')
@@ -32,7 +35,7 @@ export async function loadPlan(pathOrName: string): Promise<{ path: string; plan
   const parsed = TestPlanSchema.safeParse(raw)
   if (!parsed.success) {
     const version = typeof raw === 'object' && raw !== null && 'schemaVersion' in raw ? String((raw as {schemaVersion: unknown}).schemaVersion) : 'missing'
-    throw new Error('Invalid TestPlan schemaVersion or fields (received schemaVersion ' + version + '): ' + parsed.error.issues.map(i => i.message).join('; '))
+    throw new Error('Invalid TestPlan schemaVersion or fields (received schemaVersion ' + version + '): ' + parsed.error.issues.map(describeIssue).join('; '))
   }
   return { path: '.phloem/plans/schema-2/' + basename(path), plan: parsed.data }
 }
@@ -42,13 +45,20 @@ export async function listPlans(): Promise<Array<{ name: string; path: string; s
   await mkdir(directory, { recursive: true })
   const names = (await readdir(directory)).filter(name => name.endsWith('.json')).sort()
   const result = []
-  for (const name of names) { const loaded = await loadPlan(join('.phloem/plans/schema-2', name)); result.push({ name: loaded.plan.name, path: loaded.path, schemaVersion: loaded.plan.schemaVersion }) }
+  for (const name of names) {
+    try {
+      const loaded = await loadPlan(join('.phloem/plans/schema-2', name))
+      result.push({ name: loaded.plan.name, path: loaded.path, schemaVersion: loaded.plan.schemaVersion })
+    } catch {
+      // Corrupt files are surfaced by loading them directly; listing stays usable.
+    }
+  }
   return result
 }
 
 export async function saveRunRecord(record: unknown, secrets: readonly string[] = []): Promise<string> {
   const parsed = RunRecordSchema.safeParse(record)
-  if (!parsed.success) throw new Error('Invalid RunRecord: ' + parsed.error.issues.map(i => i.message).join('; '))
+  if (!parsed.success) throw new Error('Invalid RunRecord: ' + parsed.error.issues.map(describeIssue).join('; '))
   const directory = workspacePath('.phloem/runs')
   await mkdir(directory, { recursive: true })
   const filename = new Date().toISOString().replaceAll(':','-') + '-' + safeName(parsed.data.runId) + '.json'
@@ -92,9 +102,10 @@ export function buildPlanFromRunRecord(record: RunRecord, name: string, source?:
   for (const step of replayableSteps) {
     if (step.operation.type === 'navigate') addOrigin(step.operation.url)
   }
-  const startUrl = replayableSteps.find(step => step.operation.type === 'navigate')?.operation.type === 'navigate'
-    ? replayableSteps.find(step => step.operation.type === 'navigate')!.operation.url
-    : undefined
+  let startUrl: string | undefined
+  for (const step of replayableSteps) {
+    if (step.operation.type === 'navigate') { startUrl = step.operation.url; break }
+  }
   const plan = {
     schemaVersion: '2' as const,
     name,
@@ -141,12 +152,26 @@ export async function saveEvidenceArtifact(
   return relativePath
 }
 
-export async function redactEvidenceFile(relativePath: string, secrets: readonly string[] = []): Promise<string> {
+export async function redactEvidenceFile(relativePath: string, secrets: readonly string[] = []): Promise<string | null> {
   const path = workspacePath(relativePath)
   let text: string
-  try { text = await readFile(path, 'utf8') } catch { return relativePath }
+  try { text = await readFile(path, 'utf8') } catch { return null }
   const redacted = redactText(text, secrets)
   if (redacted !== text) await writeFile(path, redacted, 'utf8')
+  return relativePath
+}
+
+/** Redact the text entries of a zip-based evidence archive (for example trace.zip). */
+export async function redactEvidenceArchive(relativePath: string, secrets: readonly string[] = []): Promise<string | null> {
+  const path = workspacePath(relativePath)
+  let content: Buffer
+  try { content = await readFile(path) } catch { return null }
+  try {
+    const redacted = redactZipArchive(content, secrets)
+    if (redacted !== content) await writeFile(path, redacted)
+  } catch {
+    // A malformed archive is still evidence; leave it on disk untouched.
+  }
   return relativePath
 }
 
@@ -154,6 +179,10 @@ function safeEvidenceFilename(value: string): string {
   const extension = value.includes('.') ? '.' + value.split('.').pop()! : ''
   const base = value.slice(0, extension ? value.length - extension.length : value.length)
   return safeName(base) + extension.toLowerCase().replace(/[^.a-z0-9]/g, '')
+}
+
+function describeIssue(issue: { path: ReadonlyArray<string | number | symbol>; message: string }): string {
+  return (issue.path.length > 0 ? issue.path.map(String).join('.') + ': ' : '') + issue.message
 }
 
 function toPosix(value: string): string {
