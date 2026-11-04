@@ -9,6 +9,7 @@ import { evaluateAssertions } from '../assert/engine.js'
 import { BrowserOperationSchema, AssertionSchema } from '../contracts.js'
 import { BrowserSession, BrowserOperationError } from '../browser/session.js'
 import { createNavigationPolicy, parseWebsiteUrl } from '../policy/url-policy.js'
+import { listPlans, loadPlan, savePlan, saveRunRecord } from '../artifacts/store.js'
 
 const MAX_SESSIONS = 4
 const SESSION_TTL_MS = 30 * 60 * 1000
@@ -194,7 +195,58 @@ server.registerTool('assert', {
     page: managed.browser.assertionPage,
     facts: managed.browser.facts,
   })
+  if (managed.history.length) managed.history[managed.history.length - 1]!.expect.push(...assertions)
   return jsonResult({ results, passed: results.every((result) => result.pass) })
+}))
+
+
+server.registerTool('plan_save', {
+  description: 'Persist the browser operations and attached assertions executed in a session as a reusable TestPlan.',
+  inputSchema: z.object({ sessionId: z.string().uuid(), name: z.string().trim().min(1).max(120), source: z.string().trim().min(1).max(500).default('Captured from Phloem session') }).strict(),
+}, async ({ sessionId, name, source }) => safeResult('plan_save', sessionId, async () => {
+  const managed = await sessions.get(sessionId)
+  if (!managed.history.length) throw new Error('This session has no recorded browser actions to save.')
+  const plan = { schemaVersion: '2', name, source, startUrl: managed.startUrl.href, origins: managed.origins, flows: [{ id: 'captured-session', preconditions: [], steps: managed.history }], globalAssertions: [] }
+  const saved = await savePlan(plan)
+  return jsonResult({ path: saved.path, summary: { name, flows: 1, steps: managed.history.length, origins: plan.origins } })
+}))
+
+server.registerTool('plan_list', { description: 'List persisted TestPlans in the workspace.', inputSchema: z.object({}).strict() }, async () => safeResult('plan_list', undefined, async () => jsonResult(await listPlans())))
+
+server.registerTool('plan_run', {
+  description: 'Replay a saved TestPlan deterministically without model calls, then persist a validated RunRecord.',
+  inputSchema: z.object({ planPath: z.string().min(1).max(1000).optional(), planName: z.string().min(1).max(120).optional(), storageStatePath: z.string().min(1).max(1000).optional(), maxSteps: z.number().int().min(1).max(500).default(150) }).strict().refine(v => Boolean(v.planPath || v.planName), 'Provide planPath or planName.'),
+}, async ({ planPath, planName, storageStatePath, maxSteps }) => safeResult('plan_run', undefined, async () => {
+  const { plan } = await loadPlan(planPath ?? planName!)
+  const flowResults = [] as Array<{ flowId: string; verdict: string; steps: Array<{ purpose: string; startedAt: string; durationMs: number; operationOk: boolean; operationDetail: string; assertions: Array<{ pass: boolean; actual: unknown; detail: string }> }> }>
+  const startedAt = new Date().toISOString(); let total = 0; let finalUrl = ''; let finalFacts: unknown[] = []; let firstOrigins = plan.origins.length ? plan.origins : undefined
+  for (const flow of plan.flows) {
+    const firstNavigate = flow.steps.find(step => step.op.type === 'navigate')
+    const startUrl = plan.startUrl ?? (firstNavigate?.op.type === 'navigate' ? firstNavigate.op.url : undefined)
+    if (!startUrl) { flowResults.push({ flowId: flow.id, verdict: 'action_failed', steps: [] }); continue }
+    const managed = await sessions.start({ url: startUrl, ...(firstOrigins ? { origins: firstOrigins } : {}), ...(storageStatePath ? { storageStatePath } : {}) })
+    const rows = []; let verdict = 'passed'
+    try {
+      for (const step of flow.steps) {
+        if (total >= maxSteps) { verdict = 'budget_stopped'; break }
+        total++; const stepStarted = new Date().toISOString(); const began = Date.now(); let ok = true; let detail = ''
+        try { detail = await managed.browser.execute(step.op) } catch (error) { ok = false; detail = errorMessage(error); verdict = /origin policy|Navigation target|subdomains/i.test(detail) ? 'policy_blocked' : 'action_failed' }
+        const assertions = ok ? await evaluateAssertions(step.expect, { page: managed.browser.assertionPage, facts: managed.browser.facts }) : []
+        rows.push({ purpose: step.purpose, startedAt: stepStarted, durationMs: Date.now()-began, operationOk: ok, operationDetail: managed.browser.facts.redact(detail).slice(0,2000), assertions })
+        if (!ok) break
+        if (assertions.some(x => !x.pass)) { verdict = 'assertion_failed'; break }
+      }
+      const globalResults = await evaluateAssertions(plan.globalAssertions, { page: managed.browser.assertionPage, facts: managed.browser.facts })
+      if (globalResults.some(x => !x.pass) && verdict === 'passed') verdict = 'assertion_failed'
+      finalUrl = managed.browser.facts.redact(safeUrl(managed.browser.currentUrl)); finalFacts = [...managed.browser.facts.all()]
+    } finally { await sessions.end(managed.id) }
+    flowResults.push({ flowId: flow.id, verdict, steps: rows })
+  }
+  const verdict = flowResults.some(x => x.verdict !== 'passed') ? flowResults.find(x => x.verdict !== 'passed')!.verdict : 'passed'
+  const endedAt = new Date().toISOString(); const runId = randomUUID()
+  const record = { schemaVersion: '2', runId, startedAt, endedAt, url: finalUrl, verdict, steps: flowResults.flatMap(x => x.steps), facts: finalFacts, evidencePaths: [] }
+  const recordPath = await saveRunRecord(record)
+  return jsonResult({ runId, verdict, flows: flowResults, runRecordPath: recordPath })
 }))
 
 server.registerTool('session_end', {
