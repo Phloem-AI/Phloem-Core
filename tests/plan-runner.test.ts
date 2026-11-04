@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict'
 import { createServer, type Server } from 'node:http'
 import { once } from 'node:events'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
 import test, { after, before } from 'node:test'
-import { loadPlan, savePlan, saveRunRecord } from '../src/artifacts/store.js'
+import { unzipSync } from 'fflate'
+import { buildPlanFromRunRecord, loadPlan, savePlan, saveRunRecord } from '../src/artifacts/store.js'
 import { runPlan } from '../src/plans/runner.js'
+import { BrowserSession } from '../src/browser/session.js'
+import { createNavigationPolicy, parseWebsiteUrl } from '../src/policy/url-policy.js'
 import type { Assertion, Flow, TestPlan } from '../src/contracts.js'
 
 const SECRET = 'hush-token-q7Zx42'
@@ -36,6 +39,7 @@ const server = createServer((_request, response) => {
   response.end(`<!doctype html><html><body>
     <h1>Phloem replay fixture</h1>
     <button id="go">Start checkout</button><p id="status">Waiting</p>
+    <label for="pw">Password</label><input id="pw" type="password">
     <script>
       console.error('leaked ${SECRET}');
       document.querySelector('#go').addEventListener('click', () => {
@@ -117,8 +121,84 @@ test('evidence is written per run and the seeded secret never reaches disk unmas
   assert.ok(!factDump.includes(SECRET), 'seeded secret must be masked in fact dumps')
   assert.ok(factDump.includes('[redacted]'), 'redaction marker should be present in fact dumps')
 
+  // Trace archives are zip files: their text entries must be redacted too even
+  // though the archive itself is binary.
+  const archive = unzipSync(new Uint8Array(readFileSync(join(directory, 'main-trace.zip'))))
+  const leakedEntries: string[] = []
+  const textEntries: string[] = []
+  for (const [name, data] of Object.entries(archive)) {
+    try {
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(data)
+      textEntries.push(name)
+      if (text.includes(SECRET)) leakedEntries.push(name)
+    } catch {
+      // Binary resource entry, not text.
+    }
+  }
+  assert.deepEqual(leakedEntries, [], 'no trace text entry may contain the seeded secret')
+  assert.ok(textEntries.length > 0, 'trace archive should contain text entries')
+
   for (const relativePath of result.record.evidencePaths) {
     assert.ok(existsSync(join(sandbox, relativePath)), `evidence path exists: ${relativePath}`)
+  }
+})
+
+test('run records keep flow, assertion, and global-assertion provenance', async () => {
+  const plan = buildPlan({
+    name: 'provenance details',
+    globalAssertions: [{ type: 'consoleErrorCount', max: 5 }],
+  })
+  const result = await runPlan({ plan, captureEvidence: false, runId: 'provenance-details-run', sensitiveValues: [SECRET] })
+  assert.equal(result.verdict, 'passed')
+  assert.equal(result.record.flows?.[0]?.id, 'main')
+  assert.deepEqual(result.record.globalAssertions, [{ type: 'consoleErrorCount', max: 5 }])
+  const operationRows = result.record.steps.filter((step) => step.operation !== undefined)
+  assert.ok(operationRows.length > 0)
+  assert.ok(operationRows.every((step) => step.flowId === 'main'))
+  const expectedStep = operationRows.find((step) => step.purpose === 'start checkout')
+  assert.deepEqual(expectedStep?.expect, plan.flows[0]?.steps[1]?.expect)
+})
+
+test('a plan rebuilt from a run record keeps checking the original assertions', async () => {
+  const plan = buildPlan({ name: 'rebuild fixture' })
+  const result = await runPlan({ plan, captureEvidence: false, runId: 'rebuild-run' })
+  const rebuilt = buildPlanFromRunRecord(result.record, 'rebuilt plan')
+  assert.deepEqual(rebuilt.flows[0]?.steps.map((step) => step.expect), plan.flows[0]?.steps.map((step) => step.expect))
+  const rerun = await runPlan({ plan: rebuilt, captureEvidence: false, runId: 'rebuild-rerun' })
+  assert.equal(rerun.verdict, 'passed')
+})
+
+test('plan runs reject storage state outside the server working directory', async () => {
+  const outside = join(tmpdir(), `phloem-outside-${Date.now()}.json`)
+  writeFileSync(outside, JSON.stringify({ cookies: [], origins: [] }))
+  try {
+    await assert.rejects(
+      () => runPlan({ plan: buildPlan(), captureEvidence: false, storageStatePath: outside, runId: 'storage-guard-run' }),
+      /inside the server working directory/,
+    )
+  } finally {
+    rmSync(outside, { force: true })
+  }
+})
+
+test('values entered into password-like fields are tracked and redacted in captured plans', async () => {
+  const website = parseWebsiteUrl(baseUrl)
+  const session = await BrowserSession.open({ startUrl: website, navigationPolicy: createNavigationPolicy(website, '') })
+  try {
+    await session.execute({ type: 'fill', target: { role: 'textbox', name: 'Password', exact: true }, value: SECRET })
+    assert.ok(session.sensitiveValues.includes(SECRET), 'live session exposes the auto-detected value')
+    const plan = buildPlan({ name: 'captured password' })
+    plan.flows[0]!.steps.unshift({
+      op: { type: 'fill', target: { role: 'textbox', name: 'Password', exact: true }, value: SECRET },
+      purpose: 'enter password',
+      expect: [],
+    })
+    const saved = await savePlan(plan, [...session.sensitiveValues])
+    const disk = readFileSync(join(sandbox, saved.path), 'utf8')
+    assert.ok(!disk.includes(SECRET), 'captured plan must not persist the password value')
+    assert.ok(disk.includes('[redacted]'), 'redaction marker should be present in the plan')
+  } finally {
+    await session.close()
   }
 })
 

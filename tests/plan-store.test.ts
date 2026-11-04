@@ -135,33 +135,69 @@ test('loadRunRecord rejects unreadable and malformed run records', async () => {
   await assert.rejects(() => loadRunRecord('definitely-missing-run-id'), /No persisted run record matches/)
 })
 
-test('buildPlanFromRunRecord turns a replayable record into a valid plan', async () => {
+test('buildPlanFromRunRecord preserves assertion definitions and flow provenance', async () => {
   const record = RunRecordSchema.parse({
     ...validRecord('provenance-record'),
+    url: 'http://127.0.0.1:4545/cart',
+    globalAssertions: [{ type: 'consoleErrorCount', max: 0 }],
+    flows: [{ id: 'checkout', preconditions: [{ type: 'textVisible', text: 'Cart', timeoutMs: 100 }] }],
     steps: [{
-      purpose: 'go to cart',
+      purpose: 'checkout',
       startedAt: '2026-01-01T00:00:00.100Z',
       durationMs: 42,
       operationOk: true,
       operationDetail: 'Navigate to /cart.',
+      flowId: 'checkout',
       operation: { type: 'navigate', url: 'http://127.0.0.1:4545/cart' },
-      assertions: [],
+      expect: [{ type: 'textVisible', text: 'Cart', timeoutMs: 100 }],
+      assertions: [{ pass: true, actual: true, detail: 'matched' }],
     }],
-    facts: [{ kind: 'http', ts: '2026-01-01T00:00:00.100Z', method: 'GET', url: 'http://127.0.0.1:4545/cart', status: 200 }],
+    // A third-party subresource origin must never widen the replay allowlist.
+    facts: [{ kind: 'http', ts: '2026-01-01T00:00:00.100Z', method: 'GET', url: 'https://cdn.example.net/app.js', status: 200 }],
   })
   const plan = buildPlanFromRunRecord(record, 'reborn plan')
   assert.equal(plan.schemaVersion, '2')
-  assert.equal(plan.flows[0]?.steps[0]?.op.type, 'navigate')
   assert.deepEqual(plan.origins, ['http://127.0.0.1:4545'])
   assert.equal(plan.startUrl, 'http://127.0.0.1:4545/cart')
+  assert.deepEqual(plan.globalAssertions, [{ type: 'consoleErrorCount', max: 0 }])
+  assert.deepEqual(plan.flows[0]?.preconditions, [{ type: 'textVisible', text: 'Cart', timeoutMs: 100 }])
+  assert.deepEqual(plan.flows[0]?.steps[0]?.expect, [{ type: 'textVisible', text: 'Cart', timeoutMs: 100 }])
+  assert.equal(plan.flows[0]?.id, 'checkout')
   assert.ok(TestPlanSchema.safeParse(plan).success)
   const saved = await savePlan(plan)
   assert.match(saved.path, /reborn-plan\.json/)
 })
 
+test('buildPlanFromRunRecord falls back to a single flow for legacy records without flow provenance', async () => {
+  const record = RunRecordSchema.parse({
+    ...validRecord('legacy-provenance'),
+    steps: [{
+      purpose: 'go to cart',
+      startedAt: '2026-01-01T00:00:00.100Z',
+      durationMs: 10,
+      operationOk: true,
+      operationDetail: 'navigate',
+      operation: { type: 'navigate', url: 'http://127.0.0.1:4545/cart' },
+      assertions: [],
+    }],
+  })
+  const plan = buildPlanFromRunRecord(record, 'legacy plan')
+  assert.equal(plan.flows.length, 1)
+  assert.equal(plan.flows[0]?.id, 'replayed-run-record')
+  assert.deepEqual(plan.flows[0]?.steps[0]?.expect, [])
+})
+
 test('buildPlanFromRunRecord refuses records without operation provenance', async () => {
   const record = RunRecordSchema.parse(validRecord('legacy-record-no-ops'))
   assert.throws(() => buildPlanFromRunRecord(record, 'nope'), /no recorded operations to replay/)
+})
+
+test('punctuation-only plan names can be saved and loaded by name', async () => {
+  await savePlan(validPlan('!!!'))
+  const loaded = await loadPlan('!!!')
+  assert.equal(loaded.plan.name, '!!!')
+  const plans = await listPlans()
+  assert.ok(plans.some((plan) => plan.name === '!!!'))
 })
 
 test('plans are human-readable JSON with no control characters leaking', async () => {
