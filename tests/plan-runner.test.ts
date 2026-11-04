@@ -181,7 +181,7 @@ test('plan runs reject storage state outside the server working directory', asyn
   }
 })
 
-test('values entered into password-like fields are tracked and redacted in captured plans', async () => {
+test('values entered into password-like fields are tracked and retained in captured plans', async () => {
   const website = parseWebsiteUrl(baseUrl)
   const session = await BrowserSession.open({ startUrl: website, navigationPolicy: createNavigationPolicy(website, '') })
   try {
@@ -193,10 +193,10 @@ test('values entered into password-like fields are tracked and redacted in captu
       purpose: 'enter password',
       expect: [],
     })
-    const saved = await savePlan(plan, [...session.sensitiveValues])
+    const saved = await savePlan(plan)
     const disk = readFileSync(join(sandbox, saved.path), 'utf8')
-    assert.ok(!disk.includes(SECRET), 'captured plan must not persist the password value')
-    assert.ok(disk.includes('[redacted]'), 'redaction marker should be present in the plan')
+    assert.ok(disk.includes(SECRET), 'captured plan preserves the exact operation for replay')
+    assert.ok(!disk.includes('[redacted]'), 'saved plan values are not rewritten')
   } finally {
     await session.close()
   }

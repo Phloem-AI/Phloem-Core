@@ -37,7 +37,7 @@ function isWithin(root: string, target: string): boolean {
   return path === '' || (path !== '..' && !path.startsWith('..' + sep) && !isAbsolute(path))
 }
 
-export async function savePlan(plan: unknown, secrets: readonly string[] = []): Promise<{ path: string; plan: TestPlan }> {
+export async function savePlan(plan: unknown): Promise<{ path: string; plan: TestPlan }> {
   const parsed = TestPlanSchema.safeParse(plan)
   if (!parsed.success) {
     throw new Error('Invalid TestPlan: ' + parsed.error.issues.map(describeIssue).join('; '))
@@ -45,7 +45,7 @@ export async function savePlan(plan: unknown, secrets: readonly string[] = []): 
   const directory = workspacePath('.phloem/plans/schema-2')
   await mkdir(directory, { recursive: true })
   const path = join(directory, safeName(parsed.data.name) + '.json')
-  const content = redactText(JSON.stringify(redactSensitivePlanOperations(parsed.data, secrets), null, 2), secrets) + '\n'
+  const content = JSON.stringify(parsed.data, null, 2) + '\n'
   await writeFile(path, content, { encoding: 'utf8', flag: 'wx' }).catch(async error => {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
     throw new Error('A plan with this name already exists; choose another name.')
@@ -276,18 +276,6 @@ function safeEvidenceFilename(value: string): string {
 
 function describeIssue(issue: { path: ReadonlyArray<string | number | symbol>; message: string }): string {
   return (issue.path.length > 0 ? issue.path.map(String).join('.') + ': ' : '') + issue.message
-}
-
-function redactSensitivePlanOperations(plan: TestPlan, secrets: readonly string[]): TestPlan {
-  return {
-    ...plan,
-    flows: plan.flows.map((flow) => ({
-      ...flow,
-      steps: flow.steps.map((step) => step.op.type === 'fill' && isSensitiveField(step.op.target.name, step.op.value, secrets)
-        ? { ...step, op: { ...step.op, value: '[redacted]' } }
-        : step),
-    })),
-  }
 }
 
 function redactSensitiveRunOperations(record: RunRecord, secrets: readonly string[]): RunRecord {

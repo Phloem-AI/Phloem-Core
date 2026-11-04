@@ -67,10 +67,10 @@ host configuration), so they stay next to the website they exercise:
   remaining ones. `isolatedFlows` (default `true`) gives each flow a fresh browser
   context; set it to `false` to share state across flows.
 - Evidence is redacted before it is retained. Password-like fills and supplied
-  `sensitiveValues` are redacted in saved plans, run records, fact dumps, HAR
+  `sensitiveValues` are redacted in run records, fact dumps, HAR
   files, and trace text entries; final screenshots mask sensitive fields. HAR and
-  trace capture is omitted for plans containing a fill operation, supplied
-  sensitive values, or a storage state file, because Playwright writes those
+  trace capture is omitted for plans containing a fill operation or a storage
+  state file, because Playwright writes those
   archives before they can be scrubbed. A `storageStatePath` given to
   `session_start` or `plan_run` must resolve inside the server working directory.
 - Run records keep the executed operations, flow definitions, and assertion

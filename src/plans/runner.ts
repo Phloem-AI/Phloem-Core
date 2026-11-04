@@ -78,7 +78,7 @@ export async function runPlan(options: PlanRunOptions): Promise<PlanRunResult> {
   // Playwright writes HAR and trace data before post-processing. Avoid creating
   // raw archives for runs that can carry user values or authenticated state.
   const hasFillOperation = plan.flows.some((flow) => flow.steps.some((step) => step.op.type === 'fill'))
-  const captureArchives = captureEvidence && !hasFillOperation && !storageStatePath && !(options.sensitiveValues?.length)
+  const captureArchives = captureEvidence && !hasFillOperation && !storageStatePath
 
   const secrets = new Set<string>()
   const flows: FlowRunResult[] = []
