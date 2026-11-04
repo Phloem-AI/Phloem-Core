@@ -135,6 +135,8 @@ export const TestPlanSchema = z.object({
   schemaVersion: z.literal('2'),
   name: z.string().trim().min(1).max(120),
   source: z.string().trim().min(1).max(500),
+  startUrl: z.string().url().optional(),
+  origins: z.array(z.string().url()).max(20).default([]),
   flows: z.array(FlowSchema).min(1).max(50),
   globalAssertions: z.array(AssertionSchema).max(50).default([]),
 }).strict()
@@ -166,6 +168,7 @@ export const RunRecordSchema = z.object({
     durationMs: z.number().finite().nonnegative(),
     operationOk: z.boolean(),
     operationDetail: z.string().max(2000),
+    operation: BrowserOperationSchema.optional(),
     assertions: z.array(AssertionResultSchema),
   }).strict()),
   facts: z.array(z.unknown()),

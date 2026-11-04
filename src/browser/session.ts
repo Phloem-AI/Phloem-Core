@@ -22,6 +22,13 @@ export class BrowserRuntimeError extends Error {
   }
 }
 
+export interface BrowserEvidenceOptions {
+  /** Absolute file path where Playwright's trace.zip is written on flushEvidence(). */
+  tracePath?: string
+  /** Absolute file path where the context HAR is written when the context closes. */
+  harPath?: string
+}
+
 export interface BrowserSessionOptions {
   startUrl: URL
   navigationPolicy: NavigationPolicy
@@ -31,6 +38,7 @@ export interface BrowserSessionOptions {
   viewport?: { width: number; height: number } | null
   deviceName?: string | null
   storageStatePath?: string
+  evidence?: BrowserEvidenceOptions
 }
 
 type CachedDocumentResponse = {
@@ -54,6 +62,8 @@ export class BrowserSession {
   private lastActionStatus: { ok: boolean; detail: string } | undefined
   private blockedNavigation: string | undefined
   private redirectedDocumentUrl: string | undefined
+  private readonly evidence: BrowserEvidenceOptions | undefined
+  private tracing = false
   private closed = false
 
   private constructor(
@@ -61,12 +71,15 @@ export class BrowserSession {
     context: BrowserContext,
     page: Page,
     options: BrowserSessionOptions,
+    tracingStarted: boolean = false,
   ) {
     this.browser = browser
     this.context = context
     this.page = page
     this.navigationPolicy = options.navigationPolicy
     this.signal = options.signal
+    this.evidence = options.evidence
+    this.tracing = tracingStarted
     for (const value of options.sensitiveValues ?? []) this.knownSensitiveValues.add(value)
     this.factStore = new FactStore(() => [...this.knownSensitiveValues])
     attachPageTaps(page, this.factStore)
@@ -80,6 +93,7 @@ export class BrowserSession {
 
   static async open(options: BrowserSessionOptions): Promise<BrowserSession> {
     let browser: Browser | undefined
+    let tracingStarted = false
     try {
       browser = await chromium.launch({ headless: options.headless ?? true, chromiumSandbox: true })
       const device = options.deviceName ? devices[options.deviceName] : undefined
@@ -90,11 +104,15 @@ export class BrowserSession {
         ...deviceOptions,
         ...(options.viewport !== undefined ? { viewport: options.viewport } : {}),
         ...(options.storageStatePath ? { storageState: options.storageStatePath } : {}),
+        ...(options.evidence?.harPath ? { recordHar: { path: options.evidence.harPath } } : {}),
       })
-      const page = await context.newPage()
+      if (options.evidence?.tracePath) {
+        await context.tracing.start({ screenshots: true, snapshots: true, sources: false })
+        tracingStarted = true
+      }      const page = await context.newPage()
       page.setDefaultTimeout(5_000)
       page.setDefaultNavigationTimeout(15_000)
-      const session = new BrowserSession(browser, context, page, options)
+      const session = new BrowserSession(browser, context, page, options, tracingStarted)
       await session.installNavigationGuard()
       await session.execute({ type: 'navigate', url: options.startUrl.href })
       return session
@@ -111,6 +129,23 @@ export class BrowserSession {
 
   get facts(): FactStore {
     return this.factStore
+  }
+
+  get sensitiveValues(): readonly string[] {
+    return [...this.knownSensitiveValues]
+  }
+
+  /** Write Playwright's trace.zip (screenshot + DOM snapshots) and finalize evidence. */
+  async flushEvidence(): Promise<void> {
+    if (!this.evidence?.tracePath || !this.tracing) return
+    this.assertUsable()
+    await this.context.tracing.stop({ path: this.evidence.tracePath })
+    this.tracing = false
+  }
+
+  async screenshot(): Promise<Buffer> {
+    this.assertUsable()
+    return this.page.screenshot({ type: 'png' })
   }
 
   get assertionPage(): Page {

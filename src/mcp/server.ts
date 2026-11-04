@@ -23,6 +23,9 @@ type ManagedSession = {
   startedAt: string
   lastUsedAt: number
   startUrl: URL
+  origins: string[]
+  history: Array<{ op: z.infer<typeof BrowserOperationSchema>; purpose: string; expect: z.infer<typeof AssertionSchema>[] }>
+  sensitiveValues: string[]
 }
 
 class SessionManager {
@@ -35,6 +38,7 @@ class SessionManager {
     viewport?: { width: number; height: number } | null
     deviceName?: string | null
     storageStatePath?: string
+    sensitiveValues?: string[]
   }): Promise<ManagedSession> {
     await this.reapExpired()
     if (this.sessions.size >= MAX_SESSIONS) {
@@ -48,6 +52,7 @@ class SessionManager {
       ...(options.viewport !== undefined ? { viewport: options.viewport } : {}),
       ...(options.deviceName !== undefined ? { deviceName: options.deviceName } : {}),
       ...(options.storageStatePath ? { storageStatePath: await resolveWorkspacePath(options.storageStatePath) } : {}),
+      ...(options.sensitiveValues ? { sensitiveValues: options.sensitiveValues } : {}),
     })
     const managed: ManagedSession = {
       id: randomUUID(),
@@ -55,6 +60,9 @@ class SessionManager {
       startedAt: new Date().toISOString(),
       lastUsedAt: Date.now(),
       startUrl,
+      origins: options.origins?.length ? [...new Set([startUrl.origin, ...options.origins.map(origin => parseWebsiteUrl(origin).origin)])] : [startUrl.origin],
+      history: [],
+      sensitiveValues: options.sensitiveValues ?? [],
     }
     this.sessions.set(managed.id, managed)
     return managed
@@ -126,6 +134,7 @@ server.registerTool(
       deviceName: z.string().min(1).max(100).nullable().optional(),
       origins: z.array(z.string().min(1).max(2048)).max(20).optional(),
       storageStatePath: z.string().min(1).max(1000).optional(),
+      sensitiveValues: z.array(z.string().min(3).max(1000)).max(50).optional(),
     }).strict(),
   },
   async (args) => safeResult('session_start', undefined, async () => {
@@ -135,6 +144,7 @@ server.registerTool(
       ...(args.deviceName !== undefined ? { deviceName: args.deviceName } : {}),
       ...(args.origins !== undefined ? { origins: args.origins } : {}),
       ...(args.storageStatePath !== undefined ? { storageStatePath: args.storageStatePath } : {}),
+      ...(args.sensitiveValues !== undefined ? { sensitiveValues: args.sensitiveValues } : {}),
     })
     try {
       return jsonResult({
@@ -207,7 +217,7 @@ server.registerTool('plan_save', {
   const managed = await sessions.get(sessionId)
   if (!managed.history.length) throw new Error('This session has no recorded browser actions to save.')
   const plan = { schemaVersion: '2', name, source, startUrl: managed.startUrl.href, origins: managed.origins, flows: [{ id: 'captured-session', preconditions: [], steps: managed.history }], globalAssertions: [] }
-  const saved = await savePlan(plan)
+  const saved = await savePlan(plan, managed.sensitiveValues)
   return jsonResult({ path: saved.path, summary: { name, flows: 1, steps: managed.history.length, origins: plan.origins } })
 }))
 
@@ -238,7 +248,7 @@ server.registerTool('plan_run', {
       }
       const globalResults = await evaluateAssertions(plan.globalAssertions, { page: managed.browser.assertionPage, facts: managed.browser.facts })
       if (globalResults.some(x => !x.pass) && verdict === 'passed') verdict = 'assertion_failed'
-      finalUrl = managed.browser.facts.redact(safeUrl(managed.browser.currentUrl)); finalFacts = [...managed.browser.facts.all()]
+      finalUrl = managed.browser.facts.redact(safeUrl(managed.browser.currentUrl)); finalFacts.push(...managed.browser.facts.all())
     } finally { await sessions.end(managed.id) }
     flowResults.push({ flowId: flow.id, verdict, steps: rows })
   }
