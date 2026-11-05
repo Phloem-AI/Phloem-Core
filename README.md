@@ -35,6 +35,9 @@ server writes protocol data only to stdout and sends diagnostics to stderr.
 - `session_start`: open a persistent Chromium session with a URL, viewport/device, optional origin allowlist, and optional workspace storage state. The initial observation waits up to 15 seconds by default for delayed page content; set `initialWaitMs` to adjust it.
 - `observe`: wait up to 15 seconds by default for delayed page content, then get a redacted page observation and new browser facts. Set `waitMs` to `0` for an immediate snapshot.
 - `browser_act`: perform one allowlisted browser operation.
+- `download_list` and `download_read`: enumerate accepted downloads and read their
+  contents in chunks of up to 64 KiB. Text is returned as UTF-8; binary data is
+  base64-encoded. Download files are deleted when their browser session ends.
 - `assert`: evaluate page-state or recorded-fact assertions.
 - `session_end`: close a session and return its final in-memory fact roll-up.
 - `health_sweep`: summarize browser facts, check a bounded set of same-origin resources, and optionally run axe-core.

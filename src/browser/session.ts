@@ -1,5 +1,7 @@
-import { chromium, type Browser, type BrowserContext, type Page } from 'playwright'
+import { chromium, type Browser, type BrowserContext, type Download, type Page } from 'playwright'
 import { devices } from 'playwright'
+import { open as openFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import type { BrowserOperation, Locator } from '../contracts.js'
 import { resolveAllowedNavigation, UrlPolicyError, type NavigationPolicy } from '../policy/url-policy.js'
 import { redactText } from '../security/redaction.js'
@@ -7,6 +9,7 @@ import { attachPageTaps, FactStore } from '../instrument/taps.js'
 
 const MAX_SNAPSHOT_LENGTH = 30_000
 const MAX_OBSERVATION_WAIT_MS = 60_000
+const MAX_DOWNLOAD_READ_BYTES = 64 * 1024
 
 export class BrowserOperationError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -47,6 +50,16 @@ type CachedDocumentResponse = {
   body: Buffer
 }
 
+type CapturedDownload = {
+  id: string
+  download: Download
+  fileName: string
+  url: string
+  startedAt: string
+  status: 'pending' | 'completed' | 'failed'
+  failure?: string
+}
+
 export class BrowserSession {
   private readonly browser: Browser
   private readonly context: BrowserContext
@@ -57,6 +70,7 @@ export class BrowserSession {
   private readonly sensitiveLocators: Array<ReturnType<BrowserSession['target']>> = []
   private readonly factStore: FactStore
   private readonly prefetchedDocuments = new Map<string, CachedDocumentResponse>()
+  private readonly downloads = new Map<string, CapturedDownload>()
   private lastAriaSnapshot = ''
   private lastVisibleText = ''
   private lastObservedFactIndex = 0
@@ -84,6 +98,8 @@ export class BrowserSession {
     for (const value of options.sensitiveValues ?? []) this.knownSensitiveValues.add(value)
     this.factStore = new FactStore(() => [...this.knownSensitiveValues])
     attachPageTaps(page, this.factStore)
+    this.attachDownloadCapture(page)
+    context.on('page', (openedPage) => this.attachDownloadCapture(openedPage))
     browser.on('disconnected', () =>
       this.factStore.append({ kind: 'lifecycle', ts: new Date().toISOString(), event: 'browser-disconnected' }),
     )
@@ -101,7 +117,7 @@ export class BrowserSession {
       if (options.deviceName && !device) throw new Error(`Unknown Playwright device descriptor: ${options.deviceName}`)
       const { defaultBrowserType: _defaultBrowserType, ...deviceOptions } = device ?? {}
       const context = await browser.newContext({
-        acceptDownloads: false,
+        acceptDownloads: true,
         ...deviceOptions,
         ...(options.viewport !== undefined ? { viewport: options.viewport } : {}),
         ...(options.storageStatePath ? { storageState: options.storageStatePath } : {}),
@@ -137,6 +153,63 @@ export class BrowserSession {
 
   get sensitiveValues(): readonly string[] {
     return [...this.knownSensitiveValues]
+  }
+
+  listDownloads(): Array<{ downloadId: string; fileName: string; url: string; startedAt: string; status: string; failure?: string }> {
+    this.assertUsable()
+    return [...this.downloads.values()].map(({ id, fileName, url, startedAt, status, failure }) => ({
+      downloadId: id, fileName, url, startedAt, status, ...(failure ? { failure } : {}),
+    }))
+  }
+
+  async readDownload(downloadId: string, offset = 0, maxBytes = MAX_DOWNLOAD_READ_BYTES): Promise<{
+    downloadId: string; fileName: string; totalBytes: number; offset: number; nextOffset: number | null; encoding: 'utf-8' | 'base64'; content: string
+  }> {
+    this.assertUsable()
+    if (!Number.isInteger(offset) || offset < 0) throw new BrowserOperationError('Download offset must be a non-negative integer.')
+    if (!Number.isInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_DOWNLOAD_READ_BYTES) {
+      throw new BrowserOperationError(`Download read size must be between 1 and ${MAX_DOWNLOAD_READ_BYTES} bytes.`)
+    }
+    const captured = this.downloads.get(downloadId)
+    if (!captured) throw new BrowserOperationError(`No download with id "${downloadId}" exists in this browser session.`)
+    const failure = await captured.download.failure()
+    if (failure) throw new BrowserOperationError(`Download "${captured.fileName}" failed: ${failure}`)
+    const path = await captured.download.path()
+    const file = await openFile(path, 'r')
+    try {
+      const { size } = await file.stat()
+      if (offset > size) throw new BrowserOperationError(`Download offset ${offset} exceeds file length ${size}.`)
+      const length = Math.min(maxBytes, size - offset)
+      const buffer = Buffer.alloc(length)
+      let bytesRead = 0
+      while (bytesRead < length) {
+        const chunk = await file.read(buffer, bytesRead, length - bytesRead, offset + bytesRead)
+        if (chunk.bytesRead === 0) break
+        bytesRead += chunk.bytesRead
+      }
+      const data = buffer.subarray(0, bytesRead)
+      let content: string
+      let encoding: 'utf-8' | 'base64'
+      try {
+        content = new TextDecoder('utf-8', { fatal: true }).decode(data)
+        encoding = 'utf-8'
+      } catch {
+        content = data.toString('base64')
+        encoding = 'base64'
+      }
+      const nextOffset = offset + bytesRead
+      return {
+        downloadId,
+        fileName: captured.fileName,
+        totalBytes: size,
+        offset,
+        nextOffset: nextOffset < size ? nextOffset : null,
+        encoding,
+        content,
+      }
+    } finally {
+      await file.close()
+    }
   }
 
   /** Write Playwright's trace.zip (screenshot + DOM snapshots); returns true when a trace was written. */
@@ -302,6 +375,11 @@ export class BrowserSession {
     if (this.closed) return
     this.closed = true
     let closeError: unknown
+    await Promise.all([...this.downloads.values()].map(async ({ download }) => {
+      await download.cancel().catch(() => undefined)
+      await download.delete().catch(() => undefined)
+    }))
+    this.downloads.clear()
     try {
       await this.context.close()
     } catch (error) {
@@ -318,6 +396,31 @@ export class BrowserSession {
 
   private target(locator: Locator) {
     return this.page.getByRole(locator.role, { name: locator.name, exact: locator.exact })
+  }
+
+  private attachDownloadCapture(page: Page): void {
+    page.on('download', (download) => {
+      const captured: CapturedDownload = {
+        id: randomUUID(),
+        download,
+        fileName: this.redactKnownValues(download.suggestedFilename()).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 255),
+        url: this.redactKnownValues(safePageUrl(download.url())),
+        startedAt: new Date().toISOString(),
+        status: 'pending',
+      }
+      this.downloads.set(captured.id, captured)
+      void download.failure().then((failure) => {
+        if (failure) {
+          captured.status = 'failed'
+          captured.failure = this.redactKnownValues(failure).slice(0, 500)
+        } else {
+          captured.status = 'completed'
+        }
+      }).catch((error: unknown) => {
+        captured.status = 'failed'
+        captured.failure = error instanceof Error ? error.message.slice(0, 500) : 'Download status is unavailable.'
+      })
+    })
   }
 
   private assertUsable(): void {
