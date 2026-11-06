@@ -1,6 +1,6 @@
 {
   "name": "phloem-ai",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A stdio MCP server that gives coding agents measured Playwright browser tools",
   "main": "dist/index.js",
   "engines": {
