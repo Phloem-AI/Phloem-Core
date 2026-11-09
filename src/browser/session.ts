@@ -566,7 +566,6 @@ export class BrowserSession {
       const status = response.status()
       const location = responseHeaders.location
 
-      process.stderr.write(`Download probe ${status} ${JSON.stringify(responseHeaders)}\n`)
       if (isDownloadResponse(responseHeaders)) {
         delete responseHeaders['content-encoding']
         delete responseHeaders['content-length']

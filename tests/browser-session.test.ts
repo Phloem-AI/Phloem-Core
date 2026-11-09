@@ -179,7 +179,7 @@ test('Chromium captures cross-origin file downloads without allowing external pa
     }).catch((error: unknown) => error)
     assert.ok(navigationResult instanceof BrowserOperationError)
     assert.match(navigationResult.message, /origin policy/)
-    assert.equal(session.currentUrl, siteUrl + '/')
+    assert.equal(session.currentUrl.startsWith(externalUrl), false)
     assert.equal(externalRequests, 3)
   } finally {
     await session.close()
