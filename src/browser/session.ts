@@ -567,7 +567,14 @@ export class BrowserSession {
       const location = responseHeaders.location
 
       if (isDownloadResponse(responseHeaders)) {
-        await route.fulfill({ response })
+        delete responseHeaders['content-encoding']
+        delete responseHeaders['content-length']
+        delete responseHeaders['transfer-encoding']
+        await route.fulfill({
+          status,
+          headers: responseHeaders,
+          body: await response.body(),
+        })
         return
       }
 

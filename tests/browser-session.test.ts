@@ -163,6 +163,7 @@ test('Chromium captures cross-origin file downloads without allowing external pa
 
   try {
     await session.execute({ type: 'click', target: { role: 'link', name: 'Download report', exact: true } })
+    await new Promise((resolve) => setTimeout(resolve, 100))
     assert.equal(session.currentUrl, siteUrl + '/')
     const downloads = session.listDownloads()
     assert.equal(downloads.length, 1, `externalRequests=${externalRequests}`)
