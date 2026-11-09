@@ -37,7 +37,9 @@ server writes protocol data only to stdout and sends diagnostics to stderr.
 - `browser_act`: perform one allowlisted browser operation.
 - `download_list` and `download_read`: enumerate accepted downloads and read their
   contents in chunks of up to 64 KiB. Text is returned as UTF-8; binary data is
-  base64-encoded. Download files are deleted when their browser session ends.
+  base64-encoded. Cross-origin links are accepted only when their response is a
+  download; ordinary external page navigation remains subject to the origin
+  allowlist. Download files are deleted when their browser session ends.
 - `assert`: evaluate page-state or recorded-fact assertions.
 - `session_end`: close a session and return its final in-memory fact roll-up.
 - `health_sweep`: summarize browser facts, check a bounded set of same-origin resources, and optionally run axe-core.

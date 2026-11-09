@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createNavigationPolicy, parseWebsiteUrl, resolveAllowedNavigation, UrlPolicyError } from '../src/policy/url-policy.js'
+import {
+  createNavigationPolicy,
+  parseWebsiteUrl,
+  resolveAllowedNavigation,
+  resolveDownloadUrl,
+  UrlPolicyError,
+} from '../src/policy/url-policy.js'
 
 test('website URLs accept http(s) and preserve the supplied path', () => {
   const url = parseWebsiteUrl('https://example.test/app?mode=demo')
@@ -24,6 +30,16 @@ test('navigation rejects subdomains even if mentioned in the brief', () => {
   const startUrl = parseWebsiteUrl('https://example.test')
   const policy = createNavigationPolicy(startUrl, 'Visit https://shop.example.test')
   assert.throws(() => resolveAllowedNavigation('https://shop.example.test', startUrl.href, policy), /subdomains/)
+})
+
+test('download URLs can be external without relaxing navigation origin or URL restrictions', () => {
+  const startUrl = parseWebsiteUrl('https://example.test')
+  const policy = createNavigationPolicy(startUrl)
+  assert.equal(resolveDownloadUrl('https://files.test/report.zip', startUrl.href, policy).origin, 'https://files.test')
+  assert.throws(() => resolveAllowedNavigation('https://files.test/report.zip', startUrl.href, policy), /outside the origins/)
+  assert.throws(() => resolveDownloadUrl('javascript:alert(1)', startUrl.href, policy), UrlPolicyError)
+  assert.throws(() => resolveDownloadUrl('https://user:pass@files.test/report.zip', startUrl.href, policy), UrlPolicyError)
+  assert.throws(() => resolveDownloadUrl('https://shop.example.test/report.zip', startUrl.href, policy), /subdomains/)
 })
 
 test('explicit MCP origins are validated and restricted to exact origins', () => {

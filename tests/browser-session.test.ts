@@ -122,6 +122,69 @@ test('Chromium blocks navigation to an origin not named in the brief', async (co
   }
 })
 
+test('Chromium captures cross-origin file downloads without allowing external page navigation', async (context) => {
+  const fileContent = 'external download contents'
+  let externalRequests = 0
+  const externalServer = createServer((request, response) => {
+    externalRequests += 1
+    if (request.url === '/redirect') {
+      response.writeHead(302, { location: '/report' })
+      response.end()
+      return
+    }
+    if (request.url === '/report') {
+      response.writeHead(200, {
+        'content-type': 'application/octet-stream',
+        'content-disposition': 'attachment; filename="report.bin"',
+      })
+      response.end(fileContent)
+      return
+    }
+    response.writeHead(200, { 'content-type': 'text/html' })
+    response.end('<!doctype html><html><body><h1>External page</h1></body></html>')
+  })
+  const externalUrl = await listen(externalServer)
+  context.after(() => close(externalServer))
+
+  const siteServer = createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html' })
+    response.end(`<!doctype html><html><body>
+      <a href="${externalUrl}/redirect">Download report</a>
+      <a href="${externalUrl}/page">External page</a>
+    </body></html>`)
+  })
+  const siteUrl = await listen(siteServer)
+  context.after(() => close(siteServer))
+  const startUrl = parseWebsiteUrl(siteUrl)
+  const session = await BrowserSession.open({
+    startUrl,
+    navigationPolicy: createNavigationPolicy(startUrl),
+  })
+
+  try {
+    await session.execute({ type: 'click', target: { role: 'link', name: 'Download report', exact: true } })
+    assert.equal(session.currentUrl, siteUrl + '/')
+    const downloads = session.listDownloads()
+    assert.equal(downloads.length, 1, `externalRequests=${externalRequests}`)
+    assert.equal(downloads[0]?.fileName, 'report.bin')
+    const content = await session.readDownload(downloads[0]!.downloadId)
+    assert.equal(content.encoding, 'utf-8')
+    assert.equal(content.content, fileContent)
+    assert.equal(externalRequests, 2)
+
+    const navigationResult = await session.execute({
+      type: 'click',
+      target: { role: 'link', name: 'External page', exact: true },
+    }).catch((error: unknown) => error)
+    assert.ok(navigationResult instanceof BrowserOperationError)
+    assert.match(navigationResult.message, /origin policy/)
+    assert.equal(session.currentUrl, siteUrl + '/')
+    assert.equal(externalRequests, 3)
+  } finally {
+    await session.close()
+  }
+})
+
 test('session taps record page errors, console warnings, and HTTP failures', async (context) => {
   const server = createServer((request, response) => {
     if (request.url === '/api/failure') {
