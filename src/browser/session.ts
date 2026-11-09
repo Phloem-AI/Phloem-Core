@@ -3,7 +3,7 @@ import { devices } from 'playwright'
 import { open as openFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import type { BrowserOperation, Locator } from '../contracts.js'
-import { resolveAllowedNavigation, UrlPolicyError, type NavigationPolicy } from '../policy/url-policy.js'
+import { resolveAllowedNavigation, resolveDownloadUrl, UrlPolicyError, type NavigationPolicy } from '../policy/url-policy.js'
 import { redactText } from '../security/redaction.js'
 import { attachPageTaps, FactStore } from '../instrument/taps.js'
 
@@ -470,6 +470,16 @@ export class BrowserSession {
 
   private async fulfillDocumentNavigation(route: import('playwright').Route): Promise<void> {
     const request = route.request()
+    const requestUrl = resolveDownloadUrl(
+      request.url(),
+      this.navigationPolicy.startUrl.href,
+      this.navigationPolicy,
+    )
+    if (!this.navigationPolicy.allowedOrigins.has(requestUrl.origin)) {
+      await this.fulfillExternalDownload(route, requestUrl, request.method(), request.postDataBuffer() ?? undefined, await request.allHeaders())
+      return
+    }
+
     let currentUrl = resolveAllowedNavigation(
       request.url(),
       this.navigationPolicy.startUrl.href,
@@ -531,6 +541,81 @@ export class BrowserSession {
     }
   }
 
+  private async fulfillExternalDownload(
+    route: import('playwright').Route,
+    startUrl: URL,
+    method: string,
+    postData: Buffer | undefined,
+    requestHeaders: Record<string, string>,
+  ): Promise<void> {
+    let currentUrl = startUrl
+    let headers = requestHeaders
+    const sourceUrl = new URL(this.page.url())
+    headers = await this.headersForDestination(headers, sourceUrl, currentUrl)
+
+    for (let redirectCount = 0; redirectCount <= 10; redirectCount += 1) {
+      const response = await route.fetch({
+        url: currentUrl.href,
+        method,
+        ...(postData ? { postData } : {}),
+        headers,
+        maxRedirects: 0,
+        timeout: 15_000,
+      })
+      const responseHeaders = await response.headers()
+      const status = response.status()
+      const location = responseHeaders.location
+
+      if (isDownloadResponse(responseHeaders)) {
+        delete responseHeaders['content-encoding']
+        delete responseHeaders['content-length']
+        delete responseHeaders['transfer-encoding']
+        await route.fulfill({
+          status,
+          headers: responseHeaders,
+          body: await response.body(),
+        })
+        return
+      }
+
+      if (status < 300 || status >= 400 || !location) {
+        throw new UrlPolicyError('Cross-origin response is not a downloadable file.')
+      }
+      if (redirectCount === 10) {
+        throw new UrlPolicyError('Download exceeded Phloem\'s 10-redirect limit.')
+      }
+
+      const destination = resolveDownloadUrl(location, currentUrl.href, this.navigationPolicy)
+      headers = await this.headersForDestination(headers, currentUrl, destination)
+      if ([301, 302, 303].includes(status) && method !== 'GET' && method !== 'HEAD') {
+        method = 'GET'
+        postData = undefined
+        delete headers['content-length']
+        delete headers['content-type']
+      }
+      currentUrl = destination
+    }
+  }
+
+  private async headersForDestination(
+    headers: Record<string, string>,
+    source: URL,
+    destination: URL,
+  ): Promise<Record<string, string>> {
+    if (destination.origin === source.origin) return headers
+
+    const destinationHeaders = { ...headers }
+    delete destinationHeaders.authorization
+    delete destinationHeaders['proxy-authorization']
+    const destinationCookies = await this.context.cookies(destination.href)
+    if (destinationCookies.length > 0) {
+      destinationHeaders.cookie = destinationCookies.map(({ name, value }) => `${name}=${value}`).join('; ')
+    } else {
+      delete destinationHeaders.cookie
+    }
+    return destinationHeaders
+  }
+
   private async completeAllowedRedirects(): Promise<void> {
     for (let count = 0; this.redirectedDocumentUrl && count < 10; count += 1) {
       const destination = this.redirectedDocumentUrl
@@ -556,7 +641,24 @@ export class BrowserSession {
   private redactKnownValues(value: string): string {
     return redactText(value, [...this.knownSensitiveValues])
   }
+}
 
+function isDownloadResponse(headers: Record<string, string>): boolean {
+  const disposition = headers['content-disposition']?.split(';', 1)[0]?.trim().toLowerCase()
+  if (disposition === 'attachment') return true
+
+  const contentType = headers['content-type']?.split(';', 1)[0]?.trim().toLowerCase()
+  if (!contentType) return false
+  if (/^(text\/|image\/|audio\/|video\/)/.test(contentType)) return false
+  if ([
+    'application/pdf',
+    'application/json',
+    'application/javascript',
+    'application/ecmascript',
+    'application/xml',
+    'application/xhtml+xml',
+  ].includes(contentType) || /\+(?:json|xml)$/.test(contentType)) return false
+  return true
 }
 
 function safePageUrl(value: string): string {

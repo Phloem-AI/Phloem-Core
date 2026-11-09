@@ -90,6 +90,20 @@ export function resolveAllowedNavigation(
   currentUrl: string,
   policy: NavigationPolicy,
 ): URL {
+  const resolved = resolveHttpUrl(candidate, currentUrl, policy)
+
+  if (!policy.allowedOrigins.has(resolved.origin)) {
+    throw new UrlPolicyError('Navigation target is outside the origins allowed by the original brief.')
+  }
+
+  return resolved
+}
+
+export function resolveDownloadUrl(candidate: string, currentUrl: string, policy: NavigationPolicy): URL {
+  return resolveHttpUrl(candidate, currentUrl, policy)
+}
+
+function resolveHttpUrl(candidate: string, currentUrl: string, policy: NavigationPolicy): URL {
   let resolved: URL
   try {
     resolved = new URL(candidate, currentUrl)
@@ -105,9 +119,6 @@ export function resolveAllowedNavigation(
   }
   if (isSubdomain(resolved.hostname, policy.baseHostname)) {
     throw new UrlPolicyError('Phloem does not explore subdomains.')
-  }
-  if (!policy.allowedOrigins.has(resolved.origin)) {
-    throw new UrlPolicyError('Navigation target is outside the origins allowed by the original brief.')
   }
 
   return resolved
