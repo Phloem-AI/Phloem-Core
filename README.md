@@ -1,22 +1,10 @@
 # Phloem-AI
 
-Phloem-AI is a local stdio MCP server that gives a coding agent controlled access to Playwright and Chromium. The agent plans test flows and interprets results; Phloem-AI records browser facts and evaluates explicit assertions without making model calls or reading application source code.
+Phloem-AI is a local stdio MCP server that plugs into your Coding Agent, and allows it to test a web application *end to end*. The agent plans test flows and interprets results; Phloem-AI records browser facts and evaluates explicit assertions.
 
 ## Install
 
-Configure your MCP host to launch Phloem-AI package from npm with `npx`:
-
-```json
-{
-  "mcpServers": {
-    "phloem-ai": {
-      "command": "npx",
-      "args": ["-y", "phloem-ai"],
-      "cwd": "<website-workspace>"
-    }
-  }
-}
-```
+Configure your MCP host to launch Phloem-AI package from npm with `npx -y phloem-ai`.
 
 The first launch installs the package and Playwright's Chromium browser.
 
