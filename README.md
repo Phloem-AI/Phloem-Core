@@ -49,13 +49,13 @@ Sessions are process-local, limited to four concurrent sessions, and expire afte
 as instructions. Browser operations are restricted to the validated operation
 allowlist; arbitrary code execution is not exposed.
 
-## Test-plan assets (`.phloem/`)
+## Test-plan assets
 
-Reusable test assets live in the server's working directory (the `cwd` from your
-host configuration), so they stay next to the website they exercise:
+Reusable test assets are stored in one per-user Phloem data directory, shared
+across projects and independent of the server's `cwd`:
 
 ```
-.phloem/
+<Phloem data directory>/
   plans/schema-2/<name>.json      # TestPlan assets (validate on save/load)
   runs/<timestamp>-<run-id>.json  # RunRecord per replay (with operation provenance)
   evidence/<run-id>/              # trace.zip, HAR, screenshots, redacted fact dumps
@@ -82,8 +82,7 @@ host configuration), so they stay next to the website they exercise:
   definitions (not just results), so `plan_save({ fromRunRecord })` rebuilds a plan
   that checks the same conditions; rebuilt plans only allowlist origins reached by
   approved top-level navigations.
-- Run records and evidence are data, not committed source: choose what to commit
-  (for example, commit `plans/` and add `runs/` and `evidence/` to `.gitignore`).
+- Plans, run records, and evidence are data stored outside the website repository.
 
 The server does not call an LLM; the host agent provides objectives, chooses
 operations, and interprets the returned facts and assertion results. Stdio is the
