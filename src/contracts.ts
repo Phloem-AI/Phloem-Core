@@ -28,6 +28,16 @@ const NavigateOperationSchema = z
   })
   .strict()
 
+const GoBackOperationSchema = z.object({ type: z.literal('goBack') }).strict()
+
+const UploadFilesOperationSchema = z
+  .object({
+    type: z.literal('uploadFiles'),
+    label: z.string().trim().min(1).max(200).describe('Accessible label for the file input.'),
+    files: z.array(z.string().trim().min(1).max(1000)).min(1).max(10),
+  })
+  .strict()
+
 const TargetOperationSchema = z
   .object({
     type: z.enum(['click', 'check', 'uncheck']),
@@ -76,6 +86,8 @@ const WaitForVisibleOperationSchema = z
 
 export const BrowserOperationSchema = z.discriminatedUnion('type', [
   NavigateOperationSchema,
+  GoBackOperationSchema,
+  UploadFilesOperationSchema,
   TargetOperationSchema,
   ScrollOperationSchema,
   FillOperationSchema,

@@ -34,7 +34,7 @@ export interface PlanRunOptions {
   maxSteps?: number
   /** Fresh browser context per flow (default true). When false, flows share one browser and state. */
   isolatedFlows?: boolean
-  /** Write trace.zip, HAR, screenshots, and redacted fact dumps under .phloem/evidence/. */
+  /** Write trace.zip, HAR, screenshots, and redacted fact dumps under the Phloem data directory. */
   captureEvidence?: boolean
   sensitiveValues?: readonly string[]
   runId?: string
@@ -72,8 +72,7 @@ export async function runPlan(options: PlanRunOptions): Promise<PlanRunResult> {
   const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS
   const isolated = options.isolatedFlows ?? true
   const captureEvidence = options.captureEvidence ?? true
-  // Validate the storage state boundary up front: a plan run must never read a
-  // file outside the server working directory.
+  // Storage state remains workspace-scoped even though saved artifacts are global.
   const storageStatePath = options.storageStatePath ? await resolveWorkspacePath(options.storageStatePath) : undefined
   // Playwright writes HAR and trace data before post-processing. Avoid creating
   // raw archives for runs that can carry user values or authenticated state.

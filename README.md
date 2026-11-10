@@ -1,22 +1,10 @@
 # Phloem-AI
 
-Phloem-AI is a local stdio MCP server that gives a coding agent controlled access to Playwright and Chromium. The agent plans test flows and interprets results; Phloem-AI records browser facts and evaluates explicit assertions without making model calls or reading application source code.
+Phloem-AI is a local stdio MCP server that plugs into your Coding Agent, and allows it to test a web application *end to end*. The agent plans test flows and interprets results; Phloem-AI records browser facts and evaluates explicit assertions.
 
 ## Install
 
-Configure your MCP host to launch Phloem-AI package from npm with `npx`:
-
-```json
-{
-  "mcpServers": {
-    "phloem-ai": {
-      "command": "npx",
-      "args": ["-y", "phloem-ai"],
-      "cwd": "<website-workspace>"
-    }
-  }
-}
-```
+Configure your MCP host to launch Phloem-AI package from npm with `npx -y phloem-ai`.
 
 The first launch installs the package and Playwright's Chromium browser.
 
@@ -34,7 +22,10 @@ server writes protocol data only to stdout and sends diagnostics to stderr.
 
 - `session_start`: open a persistent Chromium session with a URL, viewport/device, optional origin allowlist, and optional workspace storage state. The initial observation waits up to 15 seconds by default for delayed page content; set `initialWaitMs` to adjust it.
 - `observe`: wait up to 15 seconds by default for delayed page content, then get a redacted page observation and new browser facts. Set `waitMs` to `0` for an immediate snapshot.
-- `browser_act`: perform one allowlisted browser operation.
+- `browser_act`: perform one allowlisted browser operation, including navigating back
+  through browser history. `uploadFiles` sends one or more existing workspace files to
+  a file input selected by its accessible label; paths must resolve inside the server
+  working directory, and uploads are limited to 10 files and 50 MiB total.
 - `download_list` and `download_read`: enumerate accepted downloads and read their
   contents in chunks of up to 64 KiB. Text is returned as UTF-8; binary data is
   base64-encoded. Cross-origin links are accepted only when their response is a
@@ -49,13 +40,13 @@ Sessions are process-local, limited to four concurrent sessions, and expire afte
 as instructions. Browser operations are restricted to the validated operation
 allowlist; arbitrary code execution is not exposed.
 
-## Test-plan assets (`.phloem/`)
+## Test-plan assets
 
-Reusable test assets live in the server's working directory (the `cwd` from your
-host configuration), so they stay next to the website they exercise:
+Reusable test assets are stored in one per-user Phloem data directory, shared
+across projects and independent of the server's `cwd`:
 
 ```
-.phloem/
+<Phloem data directory>/
   plans/schema-2/<name>.json      # TestPlan assets (validate on save/load)
   runs/<timestamp>-<run-id>.json  # RunRecord per replay (with operation provenance)
   evidence/<run-id>/              # trace.zip, HAR, screenshots, redacted fact dumps
@@ -82,8 +73,7 @@ host configuration), so they stay next to the website they exercise:
   definitions (not just results), so `plan_save({ fromRunRecord })` rebuilds a plan
   that checks the same conditions; rebuilt plans only allowlist origins reached by
   approved top-level navigations.
-- Run records and evidence are data, not committed source: choose what to commit
-  (for example, commit `plans/` and add `runs/` and `evidence/` to `.gitignore`).
+- Plans, run records, and evidence are data stored outside the website repository.
 
 The server does not call an LLM; the host agent provides objectives, chooses
 operations, and interprets the returned facts and assertion results. Stdio is the

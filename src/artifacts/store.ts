@@ -1,15 +1,39 @@
-import { lstatSync, realpathSync } from 'node:fs'
+import { lstatSync, mkdirSync, realpathSync } from 'node:fs'
 import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { createHash } from 'node:crypto'
+import { homedir } from 'node:os'
 import { BrowserOperationSchema, RunRecordSchema, TestPlanSchema, type BrowserOperation, type RunRecord, type TestPlan } from '../contracts.js'
 import { redactText } from '../security/redaction.js'
 import { redactZipArchive } from './redact-archive.js'
 
-function workspacePath(path: string): string {
-  const root = realpathSync(process.cwd())
+export function getArtifactDirectory(): string {
+  const configured = process.env.PHLOEM_DATA_DIR?.trim()
+  if (configured) {
+    if (!isAbsolute(configured)) throw new Error('PHLOEM_DATA_DIR must be an absolute path.')
+    return resolve(configured)
+  }
+
+  const home = homedir()
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA
+    const dataHome = localAppData && isAbsolute(localAppData) ? localAppData : join(home, 'AppData', 'Local')
+    return join(dataHome, 'Phloem')
+  }
+  if (process.platform === 'darwin') {
+    return join(home, 'Library', 'Application Support', 'Phloem')
+  }
+  const xdgDataHome = process.env.XDG_DATA_HOME
+  const dataHome = xdgDataHome && isAbsolute(xdgDataHome) ? xdgDataHome : join(home, '.local', 'share')
+  return join(dataHome, 'phloem')
+}
+
+function artifactPath(path: string): string {
+  const configuredRoot = getArtifactDirectory()
+  mkdirSync(configuredRoot, { recursive: true })
+  const root = realpathSync(configuredRoot)
   const target = resolve(root, path)
-  if (!isWithin(root, target)) throw new Error('Artifact paths must stay inside the server working directory.')
+  if (!isWithin(root, target)) throw new Error('Artifact paths must stay inside the Phloem data directory.')
   let existing = target
   while (true) {
     let found = false
@@ -19,13 +43,13 @@ function workspacePath(path: string): string {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       const parent = dirname(existing)
-      if (parent === existing) throw new Error('Could not resolve artifact path inside the server working directory.')
+      if (parent === existing) throw new Error('Could not resolve artifact path inside the Phloem data directory.')
       existing = parent
     }
     if (found) {
       // Resolving even a dangling symlink must fail closed rather than treating
       // it as a missing path and later creating files through it.
-      if (!isWithin(root, realpathSync(existing))) throw new Error('Artifact paths must stay inside the server working directory.')
+      if (!isWithin(root, realpathSync(existing))) throw new Error('Artifact paths must stay inside the Phloem data directory.')
       break
     }
   }
@@ -42,7 +66,7 @@ export async function savePlan(plan: unknown): Promise<{ path: string; plan: Tes
   if (!parsed.success) {
     throw new Error('Invalid TestPlan: ' + parsed.error.issues.map(describeIssue).join('; '))
   }
-  const directory = workspacePath('.phloem/plans/schema-2')
+  const directory = artifactPath('plans/schema-2')
   await mkdir(directory, { recursive: true })
   const path = join(directory, safeName(parsed.data.name) + '.json')
   const content = JSON.stringify(parsed.data, null, 2) + '\n'
@@ -50,11 +74,11 @@ export async function savePlan(plan: unknown): Promise<{ path: string; plan: Tes
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
     throw new Error('A plan with this name already exists; choose another name.')
   })
-  return { path: '.phloem/plans/schema-2/' + basename(path), plan: parsed.data }
+  return { path: toPosix('plans/schema-2/' + basename(path)), plan: parsed.data }
 }
 
 export async function loadPlan(pathOrName: string): Promise<{ path: string; plan: TestPlan }> {
-  const path = pathOrName.endsWith('.json') ? workspacePath(pathOrName) : workspacePath('.phloem/plans/schema-2/' + safeName(pathOrName) + '.json')
+  const path = pathOrName.endsWith('.json') ? artifactPath(pathOrName) : artifactPath('plans/schema-2/' + safeName(pathOrName) + '.json')
   let raw: unknown
   try { raw = JSON.parse(await readFile(path, 'utf8')) } catch (error) { throw new Error('Could not read plan: ' + (error instanceof Error ? error.message : 'invalid JSON')) }
   const parsed = TestPlanSchema.safeParse(raw)
@@ -62,17 +86,17 @@ export async function loadPlan(pathOrName: string): Promise<{ path: string; plan
     const version = typeof raw === 'object' && raw !== null && 'schemaVersion' in raw ? String((raw as {schemaVersion: unknown}).schemaVersion) : 'missing'
     throw new Error('Invalid TestPlan schemaVersion or fields (received schemaVersion ' + version + '): ' + parsed.error.issues.map(describeIssue).join('; '))
   }
-  return { path: '.phloem/plans/schema-2/' + basename(path), plan: parsed.data }
+  return { path: toPosix('plans/schema-2/' + basename(path)), plan: parsed.data }
 }
 
 export async function listPlans(): Promise<Array<{ name: string; path: string; schemaVersion: string }>> {
-  const directory = workspacePath('.phloem/plans/schema-2')
+  const directory = artifactPath('plans/schema-2')
   await mkdir(directory, { recursive: true })
   const names = (await readdir(directory)).filter(name => name.endsWith('.json')).sort()
   const result = []
   for (const name of names) {
     try {
-      const loaded = await loadPlan(join('.phloem/plans/schema-2', name))
+      const loaded = await loadPlan(join('plans/schema-2', name))
       result.push({ name: loaded.plan.name, path: loaded.path, schemaVersion: loaded.plan.schemaVersion })
     } catch {
       // Corrupt files are surfaced by loading them directly; listing stays usable.
@@ -84,11 +108,11 @@ export async function listPlans(): Promise<Array<{ name: string; path: string; s
 export async function saveRunRecord(record: unknown, secrets: readonly string[] = []): Promise<string> {
   const parsed = RunRecordSchema.safeParse(record)
   if (!parsed.success) throw new Error('Invalid RunRecord: ' + parsed.error.issues.map(describeIssue).join('; '))
-  const directory = workspacePath('.phloem/runs')
+  const directory = artifactPath('runs')
   await mkdir(directory, { recursive: true })
   const filename = new Date().toISOString().replaceAll(':','-') + '-' + safeName(parsed.data.runId) + '.json'
   await writeFile(join(directory, filename), redactText(JSON.stringify(redactSensitiveRunOperations(parsed.data, secrets), null, 2), secrets) + '\n', 'utf8')
-  return '.phloem/runs/' + filename
+  return 'runs/' + filename
 }
 
 export async function loadRunRecord(pathOrRunId: string): Promise<{ path: string; record: RunRecord }> {
@@ -96,21 +120,21 @@ export async function loadRunRecord(pathOrRunId: string): Promise<{ path: string
   if (pathOrRunId.endsWith('.json')) {
     path = pathOrRunId
   } else {
-    const directory = workspacePath('.phloem/runs')
+    const directory = artifactPath('runs')
     let names: string[] = []
     try { names = (await readdir(directory)).filter(name => name.endsWith('.json')).sort() } catch { names = [] }
     const match = names.find(name => name.includes(safeName(pathOrRunId)))
-    if (!match) throw new Error('No persisted run record matches runId "' + pathOrRunId + '" under .phloem/runs/.')
-    path = join('.phloem/runs', match)
+    if (!match) throw new Error('No persisted run record matches runId "' + pathOrRunId + '" under runs/.')
+    path = join('runs', match)
   }
   let raw: unknown
-  try { raw = JSON.parse(await readFile(workspacePath(path), 'utf8')) } catch (error) { throw new Error('Could not read run record: ' + (error instanceof Error ? error.message : 'invalid JSON')) }
+  try { raw = JSON.parse(await readFile(artifactPath(path), 'utf8')) } catch (error) { throw new Error('Could not read run record: ' + (error instanceof Error ? error.message : 'invalid JSON')) }
   const parsed = RunRecordSchema.safeParse(raw)
   if (!parsed.success) {
     const version = typeof raw === 'object' && raw !== null && 'schemaVersion' in raw ? String((raw as {schemaVersion: unknown}).schemaVersion) : 'missing'
     throw new Error('Invalid RunRecord schemaVersion or fields (received schemaVersion ' + version + '): ' + parsed.error.issues.map(describeIssue).join('; '))
   }
-  return { path: toPosix('.phloem/runs/' + basename(path)), record: parsed.data }
+  return { path: toPosix('runs/' + basename(path)), record: parsed.data }
 }
 
 export function buildPlanFromRunRecord(record: RunRecord, name: string, source?: string): TestPlan {
@@ -190,22 +214,22 @@ export function buildPlanFromRunRecord(record: RunRecord, name: string, source?:
   return parsed.data
 }
 
-// Evidence artifacts live under .phloem/evidence/<run-id>/ in the server working
-// directory. Every text artifact is redacted at write time, including the text
+// Evidence artifacts live under evidence/<run-id>/ in the Phloem data directory.
+// Every text artifact is redacted at write time, including the text
 // entries inside zip-based archives such as trace.zip; binary entries are left
 // intact. Facts dumped here come from the FactStore, which already redacts at
 // ingest; the second redaction pass guards against future ingest regressions.
 
 export function evidenceRelativePath(runId: string, filename: string): string {
-  return toPosix(`.phloem/evidence/${safeName(runId)}/${safeEvidenceFilename(filename)}`)
+  return toPosix(`evidence/${safeName(runId)}/${safeEvidenceFilename(filename)}`)
 }
 
 export function evidenceAbsolutePath(runId: string, filename: string): string {
-  return workspacePath(evidenceRelativePath(runId, filename))
+  return artifactPath(evidenceRelativePath(runId, filename))
 }
 
 export async function ensureEvidenceDirectory(runId: string): Promise<void> {
-  await mkdir(workspacePath(`.phloem/evidence/${safeName(runId)}`), { recursive: true })
+  await mkdir(artifactPath(`evidence/${safeName(runId)}`), { recursive: true })
 }
 
 export async function saveEvidenceArtifact(
@@ -215,7 +239,7 @@ export async function saveEvidenceArtifact(
   secrets: readonly string[] = [],
 ): Promise<string> {
   const relativePath = evidenceRelativePath(runId, filename)
-  const path = workspacePath(relativePath)
+  const path = artifactPath(relativePath)
   await mkdir(join(path, '..'), { recursive: true })
   const data = typeof content === 'string' ? redactText(content, secrets) + '\n' : content
   await writeFile(path, data)
@@ -223,7 +247,7 @@ export async function saveEvidenceArtifact(
 }
 
 export async function redactEvidenceFile(relativePath: string, secrets: readonly string[] = []): Promise<string | null> {
-  const path = workspacePath(relativePath)
+  const path = artifactPath(relativePath)
   let text: string
   try { text = await readFile(path, 'utf8') } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
@@ -246,7 +270,7 @@ export async function redactEvidenceFile(relativePath: string, secrets: readonly
 
 /** Redact the text entries of a zip-based evidence archive (for example trace.zip). */
 export async function redactEvidenceArchive(relativePath: string, secrets: readonly string[] = []): Promise<string | null> {
-  const path = workspacePath(relativePath)
+  const path = artifactPath(relativePath)
   let content: Buffer
   try { content = await readFile(path) } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
