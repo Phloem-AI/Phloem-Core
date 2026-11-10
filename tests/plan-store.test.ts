@@ -7,6 +7,7 @@ import test, { after } from 'node:test'
 import {
   buildPlanFromRunRecord,
   evidenceRelativePath,
+  getArtifactDirectory,
   loadPlan,
   loadRunRecord,
   listPlans,
@@ -16,10 +17,10 @@ import {
 } from '../src/artifacts/store.js'
 import { RunRecordSchema, TestPlanSchema } from '../src/contracts.js'
 
-// Artifact paths are resolved against the server working directory; tests run in
-// an isolated sandbox so the repo checkout is never polluted.
+// The data directory is overridden so tests never write to the real user profile.
 const sandbox = mkdtempSync(join(tmpdir(), 'phloem-store-'))
 process.chdir(sandbox)
+process.env.PHLOEM_DATA_DIR = join(sandbox, 'phloem-data')
 after(() => {
   try { rmSync(sandbox, { recursive: true, force: true }) } catch { /* Windows may hold locks briefly */ }
 })
@@ -68,7 +69,7 @@ function validRecord(runId: string): Record<string, unknown> {
 test('savePlan validates, persists, and refuses silent overwrites', async () => {
   const name = 'overwrite-probe'
   const saved = await savePlan(validPlan(name))
-  assert.match(saved.path, /\.phloem\/plans\/schema-2\/overwrite-probe\.json/)
+  assert.match(saved.path, /^plans\/schema-2\/overwrite-probe\.json$/)
   const loaded = await loadPlan(name)
   assert.equal(loaded.plan.name, name)
   assert.equal(loaded.plan.flows[0]?.steps[0]?.purpose, 'open cart')
@@ -85,12 +86,26 @@ test('savePlan rejects schemaVersion mismatches with an actionable error', async
   )
 })
 
+test('artifacts are stored under the configured global directory, not the current project', async () => {
+  const project = join(sandbox, 'another-project')
+  mkdirSync(project)
+  process.chdir(project)
+  try {
+    const saved = await savePlan(validPlan('global-location'))
+    assert.equal(getArtifactDirectory(), join(sandbox, 'phloem-data'))
+    assert.ok(readFileSync(join(getArtifactDirectory(), saved.path), 'utf8').includes('"name": "global-location"'))
+  } finally {
+    process.chdir(sandbox)
+  }
+})
+
 test('loadPlan rejects unknown versions and missing files with actionable errors', async () => {
-  const directory = join('.phloem', 'plans', 'schema-2')
+  const directory = join(getArtifactDirectory(), 'plans', 'schema-2')
   mkdirSync(directory, { recursive: true })
   writeFileSync(join(directory, 'legacy.json'), JSON.stringify({ schemaVersion: '1', name: 'legacy' }))
   await assert.rejects(() => loadPlan('legacy'), /schemaVersion 1/)
   await assert.rejects(() => loadPlan('not-a-real-plan'), /Could not read plan/)
+  await assert.rejects(() => loadPlan('../outside.json'), /inside the Phloem data directory/)
 })
 
 test('listPlans reports discoverable plans with schema versions', async () => {
@@ -102,7 +117,7 @@ test('listPlans reports discoverable plans with schema versions', async () => {
 test('saveRunRecord persists a validated record that loadRunRecord can round-trip by runId', async () => {
   const runId = 'round-trip-record'
   const recordPath = await saveRunRecord(validRecord(runId))
-  assert.match(recordPath, /\.phloem\/runs\//)
+  assert.match(recordPath, /^runs\//)
   const loaded = await loadRunRecord(runId)
   assert.equal(loaded.record.runId, runId)
   assert.equal(loaded.record.verdict, 'passed')
@@ -122,13 +137,13 @@ test('evidence artifacts are redacted at write time', async () => {
     [secret],
   )
   assert.equal(textPath, evidenceRelativePath(runId, 'facts-main.json'))
-  const text = readFileSync(join(sandbox, textPath), 'utf8')
+  const text = readFileSync(join(getArtifactDirectory(), textPath), 'utf8')
   assert.ok(text.includes('[redacted]'), 'redaction marker should be present')
   assert.ok(!text.includes(secret), 'seeded secret must be masked on disk')
 
   const bytes = new Uint8Array([0x00, 0x01, 0xff, 0xfe])
   const binaryPath = await saveEvidenceArtifact(runId, 'snap.bin', Buffer.from(bytes))
-  assert.deepEqual([...readFileSync(join(sandbox, binaryPath))], [...bytes])
+  assert.deepEqual([...readFileSync(join(getArtifactDirectory(), binaryPath))], [...bytes])
 })
 
 test('loadRunRecord rejects unreadable and malformed run records', async () => {
@@ -203,6 +218,6 @@ test('punctuation-only plan names can be saved and loaded by name', async () => 
 test('plans are human-readable JSON with no control characters leaking', async () => {
   const name = 'readable-plan'
   await savePlan(validPlan(name))
-  const text = readFileSync(join('.phloem', 'plans', 'schema-2', `${name}.json`), 'utf8')
+  const text = readFileSync(join(getArtifactDirectory(), 'plans', 'schema-2', `${name}.json`), 'utf8')
   assert.match(text, /"schemaVersion": "2"/)
 })

@@ -282,10 +282,10 @@ server.registerTool('plan_save', {
   })
 }))
 
-server.registerTool('plan_list', { description: 'List persisted TestPlans in the workspace.', inputSchema: z.object({}).strict() }, async () => safeResult('plan_list', undefined, async () => jsonResult(await listPlans())))
+server.registerTool('plan_list', { description: 'List persisted TestPlans in the Phloem data directory. Returned paths are relative to that directory.', inputSchema: z.object({}).strict() }, async () => safeResult('plan_list', undefined, async () => jsonResult(await listPlans())))
 
 server.registerTool('plan_run', {
-  description: 'Replay a saved TestPlan deterministically with no model in the loop: act, evaluate assertions, next. Writes a validated RunRecord and redacted evidence under .phloem/evidence/. HAR and trace archives are omitted when the plan contains fill operations or storage state. The plan is the spec; it is not re-negotiated.',
+  description: 'Replay a saved TestPlan deterministically with no model in the loop: act, evaluate assertions, next. Writes a validated RunRecord and redacted evidence to the Phloem data directory. HAR and trace archives are omitted when the plan contains fill operations or storage state. The plan is the spec; it is not re-negotiated.',
   inputSchema: z.object({
     planPath: z.string().min(1).max(1000).optional(),
     planName: z.string().min(1).max(120).optional(),
@@ -322,7 +322,7 @@ server.registerTool('session_end', {
     url: managed.browser.facts.redact(safeUrl(managed.browser.currentUrl)),
     facts: managed.browser.facts.digest(managed.browser.facts.all()),
     persistedArtifacts: false,
-    note: 'Downloaded files were cleaned up with the browser session. Interactive sessions are in-memory by design. Call plan_save to persist a TestPlan, or plan_run to replay a plan and persist its RunRecord plus redacted evidence under .phloem/.',
+    note: 'Downloaded files were cleaned up with the browser session. Interactive sessions are in-memory by design. Call plan_save to persist a TestPlan, or plan_run to replay a plan and persist its RunRecord plus redacted evidence in the Phloem data directory.',
   })
 }))
 

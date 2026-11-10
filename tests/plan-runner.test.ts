@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import process from 'node:process'
 import test, { after, before } from 'node:test'
 import { unzipSync } from 'fflate'
-import { buildPlanFromRunRecord, loadPlan, savePlan, saveRunRecord } from '../src/artifacts/store.js'
+import { buildPlanFromRunRecord, getArtifactDirectory, loadPlan, savePlan, saveRunRecord } from '../src/artifacts/store.js'
 import { runPlan } from '../src/plans/runner.js'
 import { BrowserSession } from '../src/browser/session.js'
 import { createNavigationPolicy, parseWebsiteUrl } from '../src/policy/url-policy.js'
@@ -16,6 +16,7 @@ import type { Assertion, Flow, TestPlan } from '../src/contracts.js'
 const SECRET = 'hush-token-q7Zx42'
 const sandbox = mkdtempSync(join(tmpdir(), 'phloem-runner-'))
 process.chdir(sandbox)
+process.env.PHLOEM_DATA_DIR = join(sandbox, 'phloem-data')
 after(() => {
   try { rmSync(sandbox, { recursive: true, force: true }) } catch { /* Windows may hold locks briefly */ }
 })
@@ -106,7 +107,7 @@ test('evidence is written per run and the seeded secret never reaches disk unmas
   const result = await runPlan({ plan, captureEvidence: true, sensitiveValues: [SECRET], runId: 'evidence-run' })
   assert.equal(result.verdict, 'passed')
 
-  const directory = join(sandbox, '.phloem', 'evidence', 'evidence-run')
+  const directory = join(getArtifactDirectory(), 'evidence', 'evidence-run')
   assert.ok(existsSync(directory), 'evidence directory must exist')
   const files = readdirSync(directory)
   assert.ok(files.includes('main.har'), 'HAR evidence is captured')
@@ -139,7 +140,7 @@ test('evidence is written per run and the seeded secret never reaches disk unmas
   assert.ok(textEntries.length > 0, 'trace archive should contain text entries')
 
   for (const relativePath of result.record.evidencePaths) {
-    assert.ok(existsSync(join(sandbox, relativePath)), `evidence path exists: ${relativePath}`)
+    assert.ok(existsSync(join(getArtifactDirectory(), relativePath)), `evidence path exists: ${relativePath}`)
   }
 })
 
@@ -194,7 +195,7 @@ test('values entered into password-like fields are tracked and retained in captu
       expect: [],
     })
     const saved = await savePlan(plan)
-    const disk = readFileSync(join(sandbox, saved.path), 'utf8')
+    const disk = readFileSync(join(getArtifactDirectory(), saved.path), 'utf8')
     assert.ok(disk.includes(SECRET), 'captured plan preserves the exact operation for replay')
     assert.ok(!disk.includes('[redacted]'), 'saved plan values are not rewritten')
   } finally {
