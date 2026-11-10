@@ -34,7 +34,10 @@ server writes protocol data only to stdout and sends diagnostics to stderr.
 
 - `session_start`: open a persistent Chromium session with a URL, viewport/device, optional origin allowlist, and optional workspace storage state. The initial observation waits up to 15 seconds by default for delayed page content; set `initialWaitMs` to adjust it.
 - `observe`: wait up to 15 seconds by default for delayed page content, then get a redacted page observation and new browser facts. Set `waitMs` to `0` for an immediate snapshot.
-- `browser_act`: perform one allowlisted browser operation.
+- `browser_act`: perform one allowlisted browser operation, including navigating back
+  through browser history. `uploadFiles` sends one or more existing workspace files to
+  a file input selected by its accessible label; paths must resolve inside the server
+  working directory, and uploads are limited to 10 files and 50 MiB total.
 - `download_list` and `download_read`: enumerate accepted downloads and read their
   contents in chunks of up to 64 KiB. Text is returned as UTF-8; binary data is
   base64-encoded. Cross-origin links are accepted only when their response is a
