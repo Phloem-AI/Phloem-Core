@@ -1,15 +1,17 @@
 import { chromium, type Browser, type BrowserContext, type Download, type Page } from 'playwright'
 import { devices } from 'playwright'
-import { open as openFile } from 'node:fs/promises'
+import { open as openFile, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import type { BrowserOperation, Locator } from '../contracts.js'
 import { resolveAllowedNavigation, resolveDownloadUrl, UrlPolicyError, type NavigationPolicy } from '../policy/url-policy.js'
 import { redactText } from '../security/redaction.js'
+import { resolveWorkspacePath } from '../security/workspace.js'
 import { attachPageTaps, FactStore } from '../instrument/taps.js'
 
 const MAX_SNAPSHOT_LENGTH = 30_000
 const MAX_OBSERVATION_WAIT_MS = 60_000
 const MAX_DOWNLOAD_READ_BYTES = 64 * 1024
+const MAX_UPLOAD_TOTAL_BYTES = 50 * 1024 * 1024
 
 export class BrowserOperationError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -312,6 +314,27 @@ export class BrowserSession {
         case 'navigate': {
           const destination = resolveAllowedNavigation(operation.url, this.page.url(), this.navigationPolicy)
           await this.page.goto(destination.href, { waitUntil: 'domcontentloaded', timeout: 15_000 })
+          break
+        }
+        case 'goBack':
+          await this.page.goBack({ waitUntil: 'domcontentloaded', timeout: 15_000 })
+          operationDescription = 'Went back to the previous page in browser history.'
+          break
+        case 'uploadFiles': {
+          const files: string[] = []
+          let totalBytes = 0
+          for (const filePath of operation.files) {
+            const resolvedPath = await resolveWorkspacePath(filePath)
+            const metadata = await stat(resolvedPath)
+            if (!metadata.isFile()) throw new BrowserOperationError('Uploaded paths must refer to files inside the server working directory.')
+            totalBytes += metadata.size
+            if (totalBytes > MAX_UPLOAD_TOTAL_BYTES) {
+              throw new BrowserOperationError(`Uploaded files must total no more than ${MAX_UPLOAD_TOTAL_BYTES} bytes.`)
+            }
+            files.push(resolvedPath)
+          }
+          await this.page.getByLabel(operation.label, { exact: true }).setInputFiles(files)
+          operationDescription = `Uploaded ${files.length} file${files.length === 1 ? '' : 's'} to the file input labeled "${operation.label}".`
           break
         }
         case 'click':
@@ -700,6 +723,10 @@ function describeOperation(operation: BrowserOperation): string {
       return `Selected an option in ${operation.target.role} "${operation.target.name}".`
     case 'navigate':
       return `Navigate to ${safePageUrl(operation.url)}.`
+    case 'goBack':
+      return 'Went back to the previous page in browser history.'
+    case 'uploadFiles':
+      return `Uploaded ${operation.files.length} file${operation.files.length === 1 ? '' : 's'} to the file input labeled "${operation.label}".`
     case 'press':
       return `Pressed ${operation.key}.`
     case 'scroll':

@@ -477,6 +477,10 @@ function describeOperation(operation: z.infer<typeof BrowserOperationSchema>, ve
   switch (operation.type) {
     case 'navigate':
       return `${verb}: navigate to ${operation.url}`.slice(0, 300)
+    case 'goBack':
+      return `${verb}: go back to the previous page in browser history`.slice(0, 300)
+    case 'uploadFiles':
+      return `${verb}: upload ${operation.files.length} file${operation.files.length === 1 ? '' : 's'} to the file input labeled "${operation.label}"`.slice(0, 300)
     case 'click':
     case 'check':
     case 'uncheck':
