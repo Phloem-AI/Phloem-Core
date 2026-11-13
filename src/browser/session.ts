@@ -87,6 +87,7 @@ export class BrowserSession {
   private lastActionStatus: { ok: boolean; detail: string } | undefined
   private blockedNavigation: string | undefined
   private redirectedDocumentUrl: string | undefined
+  private lastAllowedUrl = 'about:blank'
   private readonly evidence: BrowserEvidenceOptions | undefined
   private readonly videoPath: string | undefined
   private tracing = false
@@ -103,6 +104,7 @@ export class BrowserSession {
     this.context = context
     this.page = page
     this.navigationPolicy = options.navigationPolicy
+    this.lastAllowedUrl = options.startUrl.href
     this.signal = options.signal
     this.evidence = options.evidence
     this.videoPath = options.evidence?.videoPath
@@ -391,11 +393,17 @@ export class BrowserSession {
       if (this.blockedNavigation) throw new BrowserOperationError(this.blockedNavigation)
       await this.completeAllowedRedirects()
       if (this.blockedNavigation) throw new BrowserOperationError(this.blockedNavigation)
+      if (/^https?:/.test(this.page.url())) this.lastAllowedUrl = this.page.url()
       const detail = this.redactKnownValues(operationDescription ?? describeOperation(operation))
       this.lastActionStatus = { ok: true, detail }
       return detail
     } catch (error) {
       this.lastActionStatus = { ok: false, detail: error instanceof Error ? error.message : 'Browser action failed.' }
+      if (this.blockedNavigation) {
+        const blocked = this.blockedNavigation
+        await this.page.goto(this.lastAllowedUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 }).catch(() => undefined)
+        throw new BrowserOperationError(blocked, { cause: error })
+      }
       if (error instanceof BrowserOperationError) throw error
       if (!this.browser.isConnected() || this.page.isClosed()) {
         throw new BrowserRuntimeError('Chromium exited while executing a browser operation.', { cause: error })
@@ -432,6 +440,8 @@ export class BrowserSession {
         else throw new Error('Playwright did not expose a recording for this page.')
       } catch (error) {
         evidenceError = error
+        const orphan = await video?.path().catch(() => undefined)
+        if (orphan) await unlink(orphan).catch(() => undefined)
         await video?.delete().catch(() => undefined)
       }
     }
@@ -613,7 +623,10 @@ export class BrowserSession {
       const status = response.status()
       const location = responseHeaders.location
 
-      if (isDownloadResponse(responseHeaders)) {
+      const csvDownload = /^(?:text\/csv|application\/csv)$/.test(responseHeaders['content-type']?.split(';', 1)[0]?.trim().toLowerCase() ?? '')
+        && /\.csv(?:$|[?#])/i.test(currentUrl.href)
+      if (isDownloadResponse(responseHeaders) || csvDownload) {
+        if (csvDownload && !responseHeaders['content-disposition']) responseHeaders['content-disposition'] = 'attachment'
         delete responseHeaders['content-encoding']
         delete responseHeaders['content-length']
         delete responseHeaders['transfer-encoding']

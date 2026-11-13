@@ -24,7 +24,7 @@ type ManagedSession = {
   lastUsedAt: number
   startUrl: URL
   origins: string[]
-  history: Array<{ op: z.infer<typeof BrowserOperationSchema>; purpose: string; expect: z.infer<typeof AssertionSchema>[] }>
+  history: Array<{ op: z.infer<typeof BrowserOperationSchema>; purpose: string; expect: z.infer<typeof AssertionSchema>[]; succeeded: boolean }>
   sensitiveValues: string[]
   bugs: Array<z.infer<typeof BugReportSchema> & { bugId: string }>
 }
@@ -187,10 +187,10 @@ server.registerTool('browser_act', {
   const purpose = describeOperation(op, 'executed')
   try {
     const detail = await managed.browser.execute(op)
-    managed.history.push({ op, purpose, expect: [] })
+    managed.history.push({ op, purpose, expect: [], succeeded: true })
     return jsonResult({ ok: true, detail, facts: managed.browser.facts.digest(managed.browser.facts.since(factOffset)) })
   } catch (error) {
-    managed.history.push({ op, purpose, expect: [] })
+    managed.history.push({ op, purpose, expect: [], succeeded: false })
     const content: CallToolResult['content'] = [{
       type: 'text',
       text: JSON.stringify({
@@ -336,7 +336,7 @@ server.registerTool('session_end', {
       planPath = saved.path
     } catch (error) { autoSaveError = errorMessage(error).slice(0, 500) }
   }
-  const bugVideos: Array<{ bugId: string; title: string; evidencePath?: string; error?: string }> = []
+  const bugVideos: Array<{ bugId: string; title: string; reproduced?: boolean; firstFailedStep?: number; stepResults?: Array<{ index: number; actionOk: boolean; assertionsPassed: boolean }>; evidencePath?: string; error?: string }> = []
   await ensureEvidenceDirectory(`bug-reproductions/${managed.id}`)
   for (const bug of managed.bugs) {
     if (bug.steps.some((step) => step.op.type === 'fill')) {
@@ -353,11 +353,25 @@ server.registerTool('session_end', {
         evidence: { videoPath },
       })
       try {
-        for (const step of bug.steps) await replay.execute(step.op)
+        const stepResults: Array<{ index: number; actionOk: boolean; assertionsPassed: boolean }> = []
+        let reproduced = true
+        let firstFailedStep: number | undefined
+        for (let index = 0; index < bug.steps.length; index += 1) {
+          const step = bug.steps[index]!
+          let actionOk = true
+          let assertionsPassed = true
+          try {
+            await replay.execute(step.op)
+            const results = await evaluateAssertions(step.expect, { page: replay.assertionPage, facts: replay.facts })
+            assertionsPassed = results.every((result) => result.pass)
+          } catch { actionOk = false; assertionsPassed = false }
+          stepResults.push({ index, actionOk, assertionsPassed })
+          if (!actionOk || !assertionsPassed) { reproduced = false; firstFailedStep = index; break }
+        }
       } finally {
         await replay.close()
       }
-      bugVideos.push({ bugId: bug.bugId, title: bug.title, reproduced: true, evidencePath: evidenceRelativePath(`bug-reproductions/${managed.id}`, filename) } as typeof bugVideos[number])
+      bugVideos.push({ bugId: bug.bugId, title: bug.title, reproduced, ...(firstFailedStep !== undefined ? { firstFailedStep } : {}), stepResults, evidencePath: evidenceRelativePath(`bug-reproductions/${managed.id}`, filename) })
     } catch (error) {
       bugVideos.push({ bugId: bug.bugId, title: bug.title, error: errorMessage(error).slice(0, 500) })
     }
@@ -366,7 +380,7 @@ server.registerTool('session_end', {
   try { await managed.browser.close() } catch (error) { closeError = errorMessage(error).slice(0, 500) }
   return jsonResult({
     sessionId,
-    startedAt: ended.startedAt,
+    startedAt: managed.startedAt,
     endedAt: new Date().toISOString(),
     url: managed.browser.facts.redact(safeUrl(managed.browser.currentUrl)),
     facts: managed.browser.facts.digest(managed.browser.facts.all()),
@@ -386,7 +400,7 @@ server.registerTool('bug_report', {
   const managed = await sessions.get(sessionId)
   if (managed.bugs.length >= 10) throw new Error('A session can queue at most 10 bug reports.')
   const bugId = randomUUID()
-  managed.bugs.push({ bugId, bugId, title, steps })
+  managed.bugs.push({ bugId, title, steps })
   return jsonResult({ bugId, title, reproductionSteps: steps.length, status: 'queued-for-session-end-recording' })
 }))
 
