@@ -326,7 +326,9 @@ export class BrowserSession {
     try {
       switch (operation.type) {
         case 'navigate': {
-          const destination = resolveAllowedNavigation(operation.url, this.page.url(), this.navigationPolicy)
+          const currentUrl = this.page.url()
+          const baseUrl = /^https?:\/\//i.test(currentUrl) ? currentUrl : this.lastAllowedUrl
+          const destination = resolveAllowedNavigation(operation.url, baseUrl, this.navigationPolicy)
           await this.page.goto(destination.href, { waitUntil: 'domcontentloaded', timeout: 15_000 })
           break
         }
@@ -401,7 +403,17 @@ export class BrowserSession {
       this.lastActionStatus = { ok: false, detail: error instanceof Error ? error.message : 'Browser action failed.' }
       if (this.blockedNavigation) {
         const blocked = this.blockedNavigation
-        await this.page.goto(this.lastAllowedUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 }).catch(() => undefined)
+        try {
+          // Chromium may still be committing its internal error page after an
+          // aborted main-frame request. History traversal cancels that provisional
+          // navigation more reliably than starting another goto immediately.
+          await this.page.goBack({ waitUntil: 'domcontentloaded', timeout: 10_000 }).catch(() => null)
+          if (this.page.url() !== this.lastAllowedUrl) {
+            await this.page.goto(this.lastAllowedUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 })
+          }
+        } catch (recoveryError) {
+          throw new BrowserRuntimeError(`${blocked} Session recovery also failed.`, { cause: recoveryError })
+        }
         throw new BrowserOperationError(blocked, { cause: error })
       }
       if (error instanceof BrowserOperationError) throw error
@@ -420,6 +432,15 @@ export class BrowserSession {
     let closeError: unknown
     let evidenceError: unknown
     const video = this.videoPath ? this.page.video() : null
+    let videoSave: Promise<void> | undefined
+    if (this.videoPath) {
+      try {
+        if (!video) throw new Error('Playwright did not expose a recording for this page.')
+        // Start saveAs while the page/context is still alive; it waits for the
+        // recording to finalize when the context closes.
+        videoSave = video.saveAs(this.videoPath)
+      } catch (error) { evidenceError = error }
+    }
     await Promise.all([...this.downloads.values()].map(async ({ download }) => {
       await download.cancel().catch(() => undefined)
       await download.delete().catch(() => undefined)
@@ -434,10 +455,9 @@ export class BrowserSession {
         if (closeError === undefined) closeError = error
       })
     }
-    if (this.videoPath) {
+    if (this.videoPath && videoSave) {
       try {
-        if (video) await video.saveAs(this.videoPath)
-        else throw new Error('Playwright did not expose a recording for this page.')
+        await videoSave
       } catch (error) {
         evidenceError = error
         const orphan = await video?.path().catch(() => undefined)

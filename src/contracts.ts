@@ -166,7 +166,7 @@ export const FlowSchema = z.object({
 
 export const BugReportSchema = z.object({
   title: z.string().trim().min(1).max(160),
-  steps: z.array(StepSchema).min(1).max(150),
+  steps: z.array(StepSchema.extend({ expectedFailure: z.boolean().default(false) })).min(1).max(150),
 }).strict()
 
 export const TestPlanSchema = z.object({

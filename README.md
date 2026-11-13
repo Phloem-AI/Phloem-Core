@@ -28,7 +28,10 @@ server writes protocol data only to stdout and sends diagnostics to stderr.
   working directory, and uploads are limited to 10 files and 50 MiB total.
 - `bug_report`: queue a bug title and reproduction steps from the session. On
   `session_end`, each report is replayed from a fresh browser context and recorded as
-  its own WebM video under the Phloem evidence directory.
+  its own WebM video under the session evidence directory. Mark an action step with
+  `expectedFailure: true` when the bug is reproduced by that action failing. Videos
+  are skipped for reproductions containing `fill` steps because video pixels cannot
+  be redacted; the result identifies skipped videos and replay failures.
 - `download_list` and `download_read`: enumerate accepted downloads and read their
   contents in chunks of up to 64 KiB. Text is returned as UTF-8; binary data is
   base64-encoded. Cross-origin links are accepted only when their response is a

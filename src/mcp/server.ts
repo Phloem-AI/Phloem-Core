@@ -336,7 +336,7 @@ server.registerTool('session_end', {
       planPath = saved.path
     } catch (error) { autoSaveError = errorMessage(error).slice(0, 500) }
   }
-  const bugVideos: Array<{ bugId: string; title: string; reproduced?: boolean; firstFailedStep?: number; stepResults?: Array<{ index: number; actionOk: boolean; assertionsPassed: boolean }>; evidencePath?: string; error?: string }> = []
+  const bugVideos: Array<{ bugId: string; title: string; reproduced?: boolean; firstFailedStep?: number; stepResults?: Array<{ index: number; actionOk: boolean; assertionsPassed: boolean; expectedFailure: boolean; error?: string }>; evidencePath?: string; error?: string }> = []
   await ensureEvidenceDirectory(`bug-reproductions/${managed.id}`)
   for (const bug of managed.bugs) {
     if (bug.steps.some((step) => step.op.type === 'fill')) {
@@ -352,21 +352,24 @@ server.registerTool('session_end', {
         sensitiveValues: managed.sensitiveValues,
         evidence: { videoPath },
       })
-      const stepResults: Array<{ index: number; actionOk: boolean; assertionsPassed: boolean }> = []
+      const stepResults: Array<{ index: number; actionOk: boolean; assertionsPassed: boolean; expectedFailure: boolean; error?: string }> = []
       let reproduced = true
       let firstFailedStep: number | undefined
       try {
         for (let index = 0; index < bug.steps.length; index += 1) {
           const step = bug.steps[index]!
+          if (index === 0 && step.op.type === 'navigate' && new URL(step.op.url, managed.startUrl).href === managed.startUrl.href) continue
           let actionOk = true
           let assertionsPassed = true
+          let actionError: string | undefined
           try {
             await replay.execute(step.op)
             const results = await evaluateAssertions(step.expect, { page: replay.assertionPage, facts: replay.facts })
             assertionsPassed = results.every((result) => result.pass)
-          } catch { actionOk = false; assertionsPassed = false }
-          stepResults.push({ index, actionOk, assertionsPassed })
-          if (!actionOk || !assertionsPassed) { reproduced = false; firstFailedStep = index; break }
+          } catch (error) { actionOk = false; assertionsPassed = false; actionError = errorMessage(error).slice(0, 500) }
+          const stepSatisfied = step.expectedFailure ? !actionOk : actionOk && assertionsPassed
+          stepResults.push({ index, actionOk, assertionsPassed, expectedFailure: step.expectedFailure, ...(actionError ? { error: actionError } : {}) })
+          if (!stepSatisfied) { reproduced = false; firstFailedStep = index; break }
         }
       } finally {
         await replay.close()
