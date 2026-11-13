@@ -1,7 +1,9 @@
 import { chromium, type Browser, type BrowserContext, type Download, type Page } from 'playwright'
 import { devices } from 'playwright'
-import { open as openFile, stat } from 'node:fs/promises'
+import { mkdir, open as openFile, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
+import { unlink } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import type { BrowserOperation, Locator } from '../contracts.js'
 import { resolveAllowedNavigation, resolveDownloadUrl, UrlPolicyError, type NavigationPolicy } from '../policy/url-policy.js'
 import { redactText } from '../security/redaction.js'
@@ -27,11 +29,17 @@ export class BrowserRuntimeError extends Error {
   }
 }
 
+export class BrowserEvidenceError extends Error {
+  constructor(message: string, options?: ErrorOptions) { super(message, options); this.name = 'BrowserEvidenceError' }
+}
+
 export interface BrowserEvidenceOptions {
   /** Absolute file path where Playwright's trace.zip is written on flushEvidence(). */
   tracePath?: string
   /** Absolute file path where the context HAR is written when the context closes. */
   harPath?: string
+  /** Save a browser-context recording at this path after close. */
+  videoPath?: string
 }
 
 export interface BrowserSessionOptions {
@@ -65,7 +73,7 @@ type CapturedDownload = {
 export class BrowserSession {
   private readonly browser: Browser
   private readonly context: BrowserContext
-  private readonly page: Page
+  private page: Page
   private readonly navigationPolicy: NavigationPolicy
   private readonly signal: AbortSignal | undefined
   private readonly knownSensitiveValues = new Set<string>()
@@ -79,7 +87,9 @@ export class BrowserSession {
   private lastActionStatus: { ok: boolean; detail: string } | undefined
   private blockedNavigation: string | undefined
   private redirectedDocumentUrl: string | undefined
+  private lastAllowedUrl = 'about:blank'
   private readonly evidence: BrowserEvidenceOptions | undefined
+  private readonly videoPath: string | undefined
   private tracing = false
   private closed = false
 
@@ -94,8 +104,10 @@ export class BrowserSession {
     this.context = context
     this.page = page
     this.navigationPolicy = options.navigationPolicy
+    this.lastAllowedUrl = options.startUrl.href
     this.signal = options.signal
     this.evidence = options.evidence
+    this.videoPath = options.evidence?.videoPath
     this.tracing = tracingStarted
     for (const value of options.sensitiveValues ?? []) this.knownSensitiveValues.add(value)
     this.factStore = new FactStore(() => [...this.knownSensitiveValues])
@@ -118,12 +130,14 @@ export class BrowserSession {
       const device = options.deviceName ? devices[options.deviceName] : undefined
       if (options.deviceName && !device) throw new Error(`Unknown Playwright device descriptor: ${options.deviceName}`)
       const { defaultBrowserType: _defaultBrowserType, ...deviceOptions } = device ?? {}
+      if (options.evidence?.videoPath) await mkdir(dirname(options.evidence.videoPath), { recursive: true })
       const context = await browser.newContext({
         acceptDownloads: true,
         ...deviceOptions,
         ...(options.viewport !== undefined ? { viewport: options.viewport } : {}),
         ...(options.storageStatePath ? { storageState: options.storageStatePath } : {}),
         ...(options.evidence?.harPath ? { recordHar: { path: options.evidence.harPath } } : {}),
+        ...(options.evidence?.videoPath ? { recordVideo: { dir: dirname(options.evidence.videoPath) } } : {}),
       })
       if (options.evidence?.tracePath) {
         // Text snapshots are redacted from the trace archive at finalization.
@@ -312,7 +326,9 @@ export class BrowserSession {
     try {
       switch (operation.type) {
         case 'navigate': {
-          const destination = resolveAllowedNavigation(operation.url, this.page.url(), this.navigationPolicy)
+          const currentUrl = this.page.url()
+          const baseUrl = /^https?:\/\//i.test(currentUrl) ? currentUrl : this.lastAllowedUrl
+          const destination = resolveAllowedNavigation(operation.url, baseUrl, this.navigationPolicy)
           await this.page.goto(destination.href, { waitUntil: 'domcontentloaded', timeout: 15_000 })
           break
         }
@@ -379,11 +395,21 @@ export class BrowserSession {
       if (this.blockedNavigation) throw new BrowserOperationError(this.blockedNavigation)
       await this.completeAllowedRedirects()
       if (this.blockedNavigation) throw new BrowserOperationError(this.blockedNavigation)
+      if (/^https?:/.test(this.page.url())) this.lastAllowedUrl = this.page.url()
       const detail = this.redactKnownValues(operationDescription ?? describeOperation(operation))
       this.lastActionStatus = { ok: true, detail }
       return detail
     } catch (error) {
       this.lastActionStatus = { ok: false, detail: error instanceof Error ? error.message : 'Browser action failed.' }
+      if (this.blockedNavigation) {
+        const blocked = this.blockedNavigation
+        try {
+          await this.recoverBlockedNavigation()
+        } catch (recoveryError) {
+          throw new BrowserRuntimeError(`${blocked} Session recovery also failed.`, { cause: recoveryError })
+        }
+        throw new BrowserOperationError(blocked, { cause: error })
+      }
       if (error instanceof BrowserOperationError) throw error
       if (!this.browser.isConnected() || this.page.isClosed()) {
         throw new BrowserRuntimeError('Chromium exited while executing a browser operation.', { cause: error })
@@ -398,6 +424,17 @@ export class BrowserSession {
     if (this.closed) return
     this.closed = true
     let closeError: unknown
+    let evidenceError: unknown
+    const video = this.videoPath ? this.page.video() : null
+    let videoSave: Promise<void> | undefined
+    if (this.videoPath) {
+      try {
+        if (!video) throw new Error('Playwright did not expose a recording for this page.')
+        // Start saveAs while the page/context is still alive; it waits for the
+        // recording to finalize when the context closes.
+        videoSave = video.saveAs(this.videoPath)
+      } catch (error) { evidenceError = error }
+    }
     await Promise.all([...this.downloads.values()].map(async ({ download }) => {
       await download.cancel().catch(() => undefined)
       await download.delete().catch(() => undefined)
@@ -412,6 +449,17 @@ export class BrowserSession {
         if (closeError === undefined) closeError = error
       })
     }
+    if (this.videoPath && videoSave) {
+      try {
+        await videoSave
+      } catch (error) {
+        evidenceError = error
+        const orphan = await video?.path().catch(() => undefined)
+        if (orphan) await unlink(orphan).catch(() => undefined)
+        await video?.delete().catch(() => undefined)
+      }
+    }
+    if (evidenceError !== undefined) throw new BrowserEvidenceError('Could not save the browser video evidence.', { cause: evidenceError })
     if (closeError !== undefined) {
       throw new BrowserRuntimeError('Could not close the Chromium session cleanly.', { cause: closeError })
     }
@@ -419,6 +467,17 @@ export class BrowserSession {
 
   private target(locator: Locator) {
     return this.page.getByRole(locator.role, { name: locator.name, exact: locator.exact })
+  }
+
+  private async recoverBlockedNavigation(): Promise<void> {
+    const damagedPage = this.page
+    await damagedPage.close().catch(() => undefined)
+    const recoveredPage = await this.context.newPage()
+    recoveredPage.setDefaultTimeout(5_000)
+    recoveredPage.setDefaultNavigationTimeout(15_000)
+    this.page = recoveredPage
+    attachPageTaps(recoveredPage, this.factStore)
+    await recoveredPage.goto(this.lastAllowedUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 })
   }
 
   private attachDownloadCapture(page: Page): void {
@@ -589,7 +648,10 @@ export class BrowserSession {
       const status = response.status()
       const location = responseHeaders.location
 
-      if (isDownloadResponse(responseHeaders)) {
+      const csvDownload = /^(?:text\/csv|application\/csv)$/.test(responseHeaders['content-type']?.split(';', 1)[0]?.trim().toLowerCase() ?? '')
+        && /\.csv(?:$|[?#])/i.test(currentUrl.href)
+      if (isDownloadResponse(responseHeaders) || csvDownload) {
+        if (csvDownload && !responseHeaders['content-disposition']) responseHeaders['content-disposition'] = 'attachment'
         delete responseHeaders['content-encoding']
         delete responseHeaders['content-length']
         delete responseHeaders['transfer-encoding']

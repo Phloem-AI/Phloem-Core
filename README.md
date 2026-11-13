@@ -26,13 +26,21 @@ server writes protocol data only to stdout and sends diagnostics to stderr.
   through browser history. `uploadFiles` sends one or more existing workspace files to
   a file input selected by its accessible label; paths must resolve inside the server
   working directory, and uploads are limited to 10 files and 50 MiB total.
+- `bug_report`: queue a bug title and reproduction steps from the session. On
+  `session_end`, each report is replayed from a fresh browser context and recorded as
+  its own WebM video under the session evidence directory. Mark an action step with
+  `expectedFailure: true` when the bug is reproduced by that action failing. Videos
+  are skipped for reproductions containing `fill` steps because video pixels cannot
+  be redacted; the result identifies skipped videos and replay failures.
 - `download_list` and `download_read`: enumerate accepted downloads and read their
   contents in chunks of up to 64 KiB. Text is returned as UTF-8; binary data is
   base64-encoded. Cross-origin links are accepted only when their response is a
   download; ordinary external page navigation remains subject to the origin
   allowlist. Download files are deleted when their browser session ends.
 - `assert`: evaluate page-state or recorded-fact assertions.
-- `session_end`: close a session and return its final in-memory fact roll-up.
+- `session_end`: automatically save the explored operation history as a reusable
+  TestPlan, replay queued bug reports for video evidence, close the session, and return
+  the final fact roll-up. Use `plan_save` when you want a specifically named plan.
 - `health_sweep`: summarize browser facts, check a bounded set of same-origin resources, and optionally run axe-core.
 
 Sessions are process-local, limited to four concurrent sessions, and expire after

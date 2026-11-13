@@ -2,6 +2,9 @@ import assert from 'node:assert/strict'
 import { createServer, type Server } from 'node:http'
 import { once } from 'node:events'
 import test from 'node:test'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { BrowserOperationError, BrowserSession } from '../src/browser/session.js'
 import { AssertionSchema } from '../src/contracts.js'
 import { evaluateAssertions } from '../src/assert/engine.js'
@@ -120,6 +123,56 @@ test('Chromium blocks navigation to an origin not named in the brief', async (co
   } finally {
     await allowedSession.close()
   }
+})
+
+test('a policy-blocked cross-origin navigation recovers for a later allowed navigation', async (context) => {
+  const externalServer = createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html' })
+    response.end('<!doctype html><html><body><h1>External</h1></body></html>')
+  })
+  const externalUrl = await listen(externalServer)
+  context.after(() => close(externalServer))
+  const siteServer = createServer((request, response) => {
+    if (request.url === '/out') {
+      response.writeHead(302, { location: `${externalUrl}/private` })
+      response.end()
+      return
+    }
+    response.writeHead(200, { 'content-type': 'text/html' })
+    response.end('<!doctype html><html><body><h1>Allowed again</h1></body></html>')
+  })
+  const baseUrl = await listen(siteServer)
+  context.after(() => close(siteServer))
+  const startUrl = parseWebsiteUrl(baseUrl)
+  const session = await BrowserSession.open({ startUrl, navigationPolicy: createNavigationPolicy(startUrl) })
+  try {
+    await assert.rejects(() => session.execute({ type: 'navigate', url: '/out' }), BrowserOperationError)
+    await session.execute({ type: 'navigate', url: '/' })
+    assert.equal(session.currentUrl, `${baseUrl}/`)
+    assert.match(await session.observe(), /Allowed again/)
+  } finally {
+    await session.close()
+  }
+})
+
+test('video evidence is saved at its requested path after the browser context closes', async (context) => {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html' })
+    response.end('<!doctype html><html><body><h1>Video fixture</h1></body></html>')
+  })
+  const baseUrl = await listen(server)
+  context.after(() => close(server))
+  const directory = mkdtempSync(join(tmpdir(), 'phloem-video-'))
+  context.after(() => rmSync(directory, { recursive: true, force: true }))
+  const videoPath = join(directory, 'bug-proof.webm')
+  const startUrl = parseWebsiteUrl(baseUrl)
+  const session = await BrowserSession.open({
+    startUrl,
+    navigationPolicy: createNavigationPolicy(startUrl),
+    evidence: { videoPath },
+  })
+  await session.close()
+  assert.ok(existsSync(videoPath), 'video must be present at the bug-specific path')
 })
 
 test('Chromium captures cross-origin file downloads without allowing external page navigation', async (context) => {
