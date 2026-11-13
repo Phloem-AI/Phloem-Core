@@ -2,6 +2,7 @@ import { chromium, type Browser, type BrowserContext, type Download, type Page }
 import { devices } from 'playwright'
 import { mkdir, open as openFile, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
+import { unlink } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { BrowserOperation, Locator } from '../contracts.js'
 import { resolveAllowedNavigation, resolveDownloadUrl, UrlPolicyError, type NavigationPolicy } from '../policy/url-policy.js'
@@ -26,6 +27,10 @@ export class BrowserRuntimeError extends Error {
     super(message, options)
     this.name = 'BrowserRuntimeError'
   }
+}
+
+export class BrowserEvidenceError extends Error {
+  constructor(message: string, options?: ErrorOptions) { super(message, options); this.name = 'BrowserEvidenceError' }
 }
 
 export interface BrowserEvidenceOptions {
@@ -405,6 +410,8 @@ export class BrowserSession {
     if (this.closed) return
     this.closed = true
     let closeError: unknown
+    let evidenceError: unknown
+    const video = this.videoPath ? this.page.video() : null
     await Promise.all([...this.downloads.values()].map(async ({ download }) => {
       await download.cancel().catch(() => undefined)
       await download.delete().catch(() => undefined)
@@ -421,12 +428,14 @@ export class BrowserSession {
     }
     if (this.videoPath) {
       try {
-        const video = this.page.video()
         if (video) await video.saveAs(this.videoPath)
+        else throw new Error('Playwright did not expose a recording for this page.')
       } catch (error) {
-        if (closeError === undefined) closeError = error
+        evidenceError = error
+        await video?.delete().catch(() => undefined)
       }
     }
+    if (evidenceError !== undefined) throw new BrowserEvidenceError('Could not save the browser video evidence.', { cause: evidenceError })
     if (closeError !== undefined) {
       throw new BrowserRuntimeError('Could not close the Chromium session cleanly.', { cause: closeError })
     }

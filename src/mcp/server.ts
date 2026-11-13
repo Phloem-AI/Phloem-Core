@@ -85,6 +85,12 @@ class SessionManager {
     return managed
   }
 
+  async takeForEnd(id: string): Promise<ManagedSession> {
+    const managed = await this.get(id)
+    this.sessions.delete(id)
+    return managed
+  }
+
   async closeAll(): Promise<void> {
     const sessions = [...this.sessions.values()]
     this.sessions.clear()
@@ -316,23 +322,30 @@ server.registerTool('session_end', {
   description: 'Save the explored session as a reusable test, replay each reported bug in a fresh recording browser, save one WebM video per bug, then close the session.',
   inputSchema: z.object({ sessionId: z.string().uuid() }).strict(),
 }, async ({ sessionId }) => safeResult('session_end', sessionId, async () => {
-  const managed = await sessions.get(sessionId)
+  const managed = await sessions.takeForEnd(sessionId)
   let planPath: string | undefined
-  if (managed.history.length > 0) {
-    const name = `session-${managed.startedAt.slice(0, 19).replaceAll(':', '-')}-${managed.id.slice(0, 8)}`
-    const saved = await savePlan({
+  let autoSaveError: string | undefined
+  if (managed.history.some((entry) => entry.succeeded)) {
+    const name = `session-${managed.startedAt.replaceAll(':', '-').replaceAll('.', '-')}-${managed.id}`
+    try {
+      const saved = await savePlan({
       schemaVersion: '2', name, source: 'Automatically saved from exploratory session',
       startUrl: managed.startUrl.href, origins: managed.origins,
-      flows: [{ id: 'captured-session', preconditions: [], steps: managed.history }], globalAssertions: [],
-    })
-    planPath = saved.path
+      flows: [{ id: 'captured-session', preconditions: [], steps: managed.history.filter((entry) => entry.succeeded).map(({ succeeded: _succeeded, ...entry }) => entry) }], globalAssertions: [],
+      })
+      planPath = saved.path
+    } catch (error) { autoSaveError = errorMessage(error).slice(0, 500) }
   }
   const bugVideos: Array<{ bugId: string; title: string; evidencePath?: string; error?: string }> = []
+  await ensureEvidenceDirectory(`bug-reproductions/${managed.id}`)
   for (const bug of managed.bugs) {
+    if (bug.steps.some((step) => step.op.type === 'fill')) {
+      bugVideos.push({ bugId: bug.bugId, title: bug.title, error: 'Video skipped because replay steps fill inputs and rendered values cannot be redacted from video.' })
+      continue
+    }
     const filename = `bug-${bug.bugId}.webm`
     try {
-      await ensureEvidenceDirectory('bug-reproductions')
-      const videoPath = evidenceAbsolutePath('bug-reproductions', filename)
+      const videoPath = evidenceAbsolutePath(`bug-reproductions/${managed.id}`, filename)
       const replay = await BrowserSession.open({
         startUrl: managed.startUrl,
         navigationPolicy: createNavigationPolicy(managed.startUrl, '', managed.origins),
@@ -344,22 +357,25 @@ server.registerTool('session_end', {
       } finally {
         await replay.close()
       }
-      bugVideos.push({ bugId: bug.bugId, title: bug.title, evidencePath: evidenceRelativePath('bug-reproductions', filename) })
+      bugVideos.push({ bugId: bug.bugId, title: bug.title, reproduced: true, evidencePath: evidenceRelativePath(`bug-reproductions/${managed.id}`, filename) } as typeof bugVideos[number])
     } catch (error) {
       bugVideos.push({ bugId: bug.bugId, title: bug.title, error: errorMessage(error).slice(0, 500) })
     }
   }
-  const ended = await sessions.end(sessionId)
+  let closeError: string | undefined
+  try { await managed.browser.close() } catch (error) { closeError = errorMessage(error).slice(0, 500) }
   return jsonResult({
     sessionId,
     startedAt: ended.startedAt,
     endedAt: new Date().toISOString(),
-    url: ended.browser.facts.redact(safeUrl(ended.browser.currentUrl)),
-    facts: ended.browser.facts.digest(ended.browser.facts.all()),
+    url: managed.browser.facts.redact(safeUrl(managed.browser.currentUrl)),
+    facts: managed.browser.facts.digest(managed.browser.facts.all()),
     ...(planPath ? { savedPlanPath: planPath } : {}),
+    ...(autoSaveError ? { autoSaveError } : {}),
+    ...(closeError ? { closeError } : {}),
     bugVideos,
     persistedArtifacts: Boolean(planPath || bugVideos.some((bug) => bug.evidencePath)),
-    note: 'Downloaded files were cleaned up with the browser session. Reported bug reproductions were replayed in fresh contexts and recorded as WebM evidence.',
+    note: bugVideos.length === 0 ? 'Downloaded files were cleaned up with the browser session.' : bugVideos.every((bug) => bug.evidencePath) ? 'Every queued bug replay produced a WebM video.' : 'Some bug replay videos could not be produced; inspect each bugVideos result for details.',
   })
 }))
 
@@ -368,8 +384,9 @@ server.registerTool('bug_report', {
   inputSchema: z.object({ sessionId: z.string().uuid(), ...BugReportSchema.shape }).strict(),
 }, async ({ sessionId, title, steps }) => safeResult('bug_report', sessionId, async () => {
   const managed = await sessions.get(sessionId)
+  if (managed.bugs.length >= 10) throw new Error('A session can queue at most 10 bug reports.')
   const bugId = randomUUID()
-  managed.bugs.push({ bugId, title, steps })
+  managed.bugs.push({ bugId, bugId, title, steps })
   return jsonResult({ bugId, title, reproductionSteps: steps.length, status: 'queued-for-session-end-recording' })
 }))
 
