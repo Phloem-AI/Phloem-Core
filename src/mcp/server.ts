@@ -352,10 +352,10 @@ server.registerTool('session_end', {
         sensitiveValues: managed.sensitiveValues,
         evidence: { videoPath },
       })
+      const stepResults: Array<{ index: number; actionOk: boolean; assertionsPassed: boolean }> = []
+      let reproduced = true
+      let firstFailedStep: number | undefined
       try {
-        const stepResults: Array<{ index: number; actionOk: boolean; assertionsPassed: boolean }> = []
-        let reproduced = true
-        let firstFailedStep: number | undefined
         for (let index = 0; index < bug.steps.length; index += 1) {
           const step = bug.steps[index]!
           let actionOk = true
