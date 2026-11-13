@@ -1,7 +1,8 @@
 import { chromium, type Browser, type BrowserContext, type Download, type Page } from 'playwright'
 import { devices } from 'playwright'
-import { open as openFile, stat } from 'node:fs/promises'
+import { mkdir, open as openFile, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
+import { dirname } from 'node:path'
 import type { BrowserOperation, Locator } from '../contracts.js'
 import { resolveAllowedNavigation, resolveDownloadUrl, UrlPolicyError, type NavigationPolicy } from '../policy/url-policy.js'
 import { redactText } from '../security/redaction.js'
@@ -32,6 +33,8 @@ export interface BrowserEvidenceOptions {
   tracePath?: string
   /** Absolute file path where the context HAR is written when the context closes. */
   harPath?: string
+  /** Save a browser-context recording at this path after close. */
+  videoPath?: string
 }
 
 export interface BrowserSessionOptions {
@@ -80,6 +83,7 @@ export class BrowserSession {
   private blockedNavigation: string | undefined
   private redirectedDocumentUrl: string | undefined
   private readonly evidence: BrowserEvidenceOptions | undefined
+  private readonly videoPath: string | undefined
   private tracing = false
   private closed = false
 
@@ -96,6 +100,7 @@ export class BrowserSession {
     this.navigationPolicy = options.navigationPolicy
     this.signal = options.signal
     this.evidence = options.evidence
+    this.videoPath = options.evidence?.videoPath
     this.tracing = tracingStarted
     for (const value of options.sensitiveValues ?? []) this.knownSensitiveValues.add(value)
     this.factStore = new FactStore(() => [...this.knownSensitiveValues])
@@ -118,12 +123,14 @@ export class BrowserSession {
       const device = options.deviceName ? devices[options.deviceName] : undefined
       if (options.deviceName && !device) throw new Error(`Unknown Playwright device descriptor: ${options.deviceName}`)
       const { defaultBrowserType: _defaultBrowserType, ...deviceOptions } = device ?? {}
+      if (options.evidence?.videoPath) await mkdir(dirname(options.evidence.videoPath), { recursive: true })
       const context = await browser.newContext({
         acceptDownloads: true,
         ...deviceOptions,
         ...(options.viewport !== undefined ? { viewport: options.viewport } : {}),
         ...(options.storageStatePath ? { storageState: options.storageStatePath } : {}),
         ...(options.evidence?.harPath ? { recordHar: { path: options.evidence.harPath } } : {}),
+        ...(options.evidence?.videoPath ? { recordVideo: { dir: dirname(options.evidence.videoPath) } } : {}),
       })
       if (options.evidence?.tracePath) {
         // Text snapshots are redacted from the trace archive at finalization.
@@ -411,6 +418,14 @@ export class BrowserSession {
       await this.browser.close().catch((error: unknown) => {
         if (closeError === undefined) closeError = error
       })
+    }
+    if (this.videoPath) {
+      try {
+        const video = this.page.video()
+        if (video) await video.saveAs(this.videoPath)
+      } catch (error) {
+        if (closeError === undefined) closeError = error
+      }
     }
     if (closeError !== undefined) {
       throw new BrowserRuntimeError('Could not close the Chromium session cleanly.', { cause: closeError })
