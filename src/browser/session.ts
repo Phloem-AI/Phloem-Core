@@ -427,11 +427,13 @@ export class BrowserSession {
     let evidenceError: unknown
     const video = this.videoPath ? this.page.video() : null
     let videoSave: Promise<void> | undefined
+    let videoSourcePath: Promise<string> | undefined
     if (this.videoPath) {
       try {
         if (!video) throw new Error('Playwright did not expose a recording for this page.')
         // Start saveAs while the page/context is still alive; it waits for the
         // recording to finalize when the context closes.
+        videoSourcePath = video.path()
         videoSave = video.saveAs(this.videoPath)
       } catch (error) { evidenceError = error }
     }
@@ -452,11 +454,14 @@ export class BrowserSession {
     if (this.videoPath && videoSave) {
       try {
         await videoSave
+        // saveAs copies the recording; remove Playwright's generated page@*.webm
+        // source so only the bug-specific evidence file remains in the directory.
+        const sourcePath = await videoSourcePath
+        if (sourcePath && sourcePath !== this.videoPath) await unlink(sourcePath)
       } catch (error) {
         evidenceError = error
-        const orphan = await video?.path().catch(() => undefined)
+        const orphan = await videoSourcePath?.catch(() => undefined)
         if (orphan) await unlink(orphan).catch(() => undefined)
-        await video?.delete().catch(() => undefined)
       }
     }
     if (evidenceError !== undefined) throw new BrowserEvidenceError('Could not save the browser video evidence.', { cause: evidenceError })
