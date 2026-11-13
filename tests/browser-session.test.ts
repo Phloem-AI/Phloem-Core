@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createServer, type Server } from 'node:http'
 import { once } from 'node:events'
 import test from 'node:test'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { BrowserOperationError, BrowserSession } from '../src/browser/session.js'
@@ -173,6 +173,7 @@ test('video evidence is saved at its requested path after the browser context cl
   })
   await session.close()
   assert.ok(existsSync(videoPath), 'video must be present at the bug-specific path')
+  assert.deepEqual(readdirSync(directory), ['bug-proof.webm'], 'Playwright temporary recording must be removed')
 })
 
 test('Chromium captures cross-origin file downloads without allowing external page navigation', async (context) => {
