@@ -73,7 +73,7 @@ type CapturedDownload = {
 export class BrowserSession {
   private readonly browser: Browser
   private readonly context: BrowserContext
-  private readonly page: Page
+  private page: Page
   private readonly navigationPolicy: NavigationPolicy
   private readonly signal: AbortSignal | undefined
   private readonly knownSensitiveValues = new Set<string>()
@@ -404,13 +404,7 @@ export class BrowserSession {
       if (this.blockedNavigation) {
         const blocked = this.blockedNavigation
         try {
-          // Chromium may still be committing its internal error page after an
-          // aborted main-frame request. History traversal cancels that provisional
-          // navigation more reliably than starting another goto immediately.
-          await this.page.goBack({ waitUntil: 'domcontentloaded', timeout: 10_000 }).catch(() => null)
-          if (this.page.url() !== this.lastAllowedUrl) {
-            await this.page.goto(this.lastAllowedUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 })
-          }
+          await this.recoverBlockedNavigation()
         } catch (recoveryError) {
           throw new BrowserRuntimeError(`${blocked} Session recovery also failed.`, { cause: recoveryError })
         }
@@ -473,6 +467,17 @@ export class BrowserSession {
 
   private target(locator: Locator) {
     return this.page.getByRole(locator.role, { name: locator.name, exact: locator.exact })
+  }
+
+  private async recoverBlockedNavigation(): Promise<void> {
+    const damagedPage = this.page
+    await damagedPage.close().catch(() => undefined)
+    const recoveredPage = await this.context.newPage()
+    recoveredPage.setDefaultTimeout(5_000)
+    recoveredPage.setDefaultNavigationTimeout(15_000)
+    this.page = recoveredPage
+    attachPageTaps(recoveredPage, this.factStore)
+    await recoveredPage.goto(this.lastAllowedUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 })
   }
 
   private attachDownloadCapture(page: Page): void {
