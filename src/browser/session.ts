@@ -137,7 +137,7 @@ export class BrowserSession {
         ...(options.viewport !== undefined ? { viewport: options.viewport } : {}),
         ...(options.storageStatePath ? { storageState: options.storageStatePath } : {}),
         ...(options.evidence?.harPath ? { recordHar: { path: options.evidence.harPath } } : {}),
-        ...(options.evidence?.videoPath ? { recordVideo: { dir: dirname(options.evidence.videoPath) } } : {}),
+        ...(options.evidence?.videoPath ? { recordVideo: { dir: dirname(options.evidence.videoPath), size: options.viewport ?? { width: 1280, height: 720 } } } : {}),
       })
       if (options.evidence?.tracePath) {
         // Text snapshots are redacted from the trace archive at finalization.
