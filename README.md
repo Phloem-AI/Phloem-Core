@@ -2,6 +2,10 @@
 
 Phloem-AI is a local stdio MCP server that plugs into your Coding Agent, and allows it to test a web application *end to end*. The agent plans test flows and interprets results; Phloem-AI records browser facts and evaluates explicit assertions.
 
+## Quick demo with Opencode
+
+https://github.com/user-attachments/assets/f67eff12-8d57-4590-bb68-478b68d0cee1
+
 ## Install
 
 Configure your MCP host to launch Phloem-AI package from npm with `npx -y phloem-ai`.
