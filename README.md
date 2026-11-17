@@ -1,4 +1,4 @@
-# Phloem-AI
+<h1 align="center"> PHLOEM-AI </h1>
 
 Phloem-AI is a local stdio MCP server that plugs into your Coding Agent, and allows it to test a web application *end to end*. The agent plans test flows and interprets results; Phloem-AI records browser facts and evaluates explicit assertions.
 
