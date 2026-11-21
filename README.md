@@ -52,6 +52,23 @@ Sessions are process-local, limited to four concurrent sessions, and expire afte
 as instructions. Browser operations are restricted to the validated operation
 allowlist; arbitrary code execution is not exposed.
 
+## Phloem-AI vs. Playwright
+
+Phloem-AI is built on Playwright. Playwright provides the browser automation engine;
+Phloem adds an MCP interface and a workflow designed for coding agents that need to
+explore an application, report what they observed, and turn useful explorations into
+**repeatable checks**.
+
+### Why choose Phloem-AI?
+
+Choose Phloem-AI when you want a coding agent to test a live web application through
+a narrow, structured tool interface instead of having the agent write browser code
+for every exploration. Phloem keeps the browser session and action history, returns
+structured observations and assertion results, applies navigation and operation
+boundaries, and can turn successful exploration into a saved plan that runs the same
+way later in CI. Its redaction and evidence handling also give agent workflows a
+consistent place to manage captured browser data.
+
 ## Test-plan assets
 
 Reusable test assets are stored in one per-user Phloem data directory, shared
