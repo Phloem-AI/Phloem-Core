@@ -22,6 +22,18 @@ npm run build
 For local development, configure Node to launch `dist/index.js`. During development, `npm start` starts the same stdio server from TypeScript. The
 server writes protocol data only to stdout and sends diagnostics to stderr.
 
+## Run a saved plan from the CLI
+
+The CLI can replay a saved plan without an MCP host. It uses the same deterministic runner as `plan_run`, saves a RunRecord and evidence to the Phloem data directory, and exits with code `0` for a pass, `1` for a failed verdict, or `2` for a CLI or setup error:
+
+```sh
+npx -y phloem-ai run checkout-flow
+npx -y phloem-ai run checkout-flow --headed
+npx -y phloem-ai run checkout-flow --json
+```
+
+Use `phloem-ai --help` for all options. The default is headless Chromium, which is suitable for CI. `--headed` displays Chromium and requires a desktop session. Plan names and paths are resolved from the Phloem data directory; set `PHLOEM_DATA_DIR` to share version-controlled plans with a project or CI job. A plan path is relative to that directory. The application under test must already be running and reachable.
+
 ## Tools
 
 - `session_start`: open a persistent Chromium session with a URL, viewport/device, optional origin allowlist, and optional workspace storage state. The initial observation waits up to 15 seconds by default for delayed page content; set `initialWaitMs` to adjust it.

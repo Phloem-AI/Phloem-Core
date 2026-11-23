@@ -8,8 +8,8 @@ import { BrowserOperationSchema, AssertionSchema, FlowSchema, BugReportSchema } 
 import { BrowserSession, BrowserOperationError } from '../browser/session.js'
 import { createNavigationPolicy, parseWebsiteUrl } from '../policy/url-policy.js'
 import { resolveWorkspacePath } from '../security/workspace.js'
-import { buildPlanFromRunRecord, listPlans, loadPlan, loadRunRecord, savePlan, saveRunRecord, ensureEvidenceDirectory, evidenceAbsolutePath, evidenceRelativePath } from '../artifacts/store.js'
-import { runPlan } from '../plans/runner.js'
+import { buildPlanFromRunRecord, listPlans, loadRunRecord, savePlan, ensureEvidenceDirectory, evidenceAbsolutePath, evidenceRelativePath } from '../artifacts/store.js'
+import { runSavedPlan } from '../plans/run-saved-plan.js'
 
 const MAX_SESSIONS = 4
 const SESSION_TTL_MS = 30 * 60 * 1000
@@ -304,16 +304,14 @@ server.registerTool('plan_run', {
     sensitiveValues: z.array(z.string().min(3).max(1000)).max(50).optional(),
   }).strict().refine(v => Boolean(v.planPath || v.planName), 'Provide planPath or planName.'),
 }, async ({ planPath, planName, storageStatePath, maxSteps, isolatedFlows, captureEvidence, sensitiveValues }) => safeResult('plan_run', undefined, async () => {
-  const { plan, path } = await loadPlan(planPath ?? planName!)
-  const result = await runPlan({
-    plan,
+  const { planPath: path, result, runRecordPath: recordPath } = await runSavedPlan({
+    planPathOrName: planPath ?? planName!,
     ...(storageStatePath ? { storageStatePath } : {}),
     maxSteps,
     isolatedFlows,
     captureEvidence,
     ...(sensitiveValues ? { sensitiveValues } : {}),
   })
-  const recordPath = await saveRunRecord(result.record, result.secrets)
   const verdictSummary = result.flows.map((flow) => ({ flowId: flow.flowId, verdict: flow.verdict, steps: flow.steps.filter((step) => step.operation !== undefined).length, ...(flow.detail ? { detail: flow.detail } : {}) }))
   return jsonResult({ runId: result.runId, verdict: result.verdict, planPath: path, flows: verdictSummary, runRecordPath: recordPath, evidencePaths: result.record.evidencePaths })
 }))

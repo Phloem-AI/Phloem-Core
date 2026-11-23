@@ -29,6 +29,8 @@ const DEFAULT_MAX_STEPS = 150
 
 export interface PlanRunOptions {
   plan: TestPlan
+  /** Show Chromium's window (default false). */
+  headless?: boolean
   storageStatePath?: string
   /** Step budget for the whole run; each flow is additionally capped by its own maxSteps. */
   maxSteps?: number
@@ -129,6 +131,7 @@ export async function runPlan(options: PlanRunOptions): Promise<PlanRunResult> {
           runId,
           captureEvidence: captureArchives,
           evidence,
+          ...(options.headless !== undefined ? { headless: options.headless } : {}),
           ...(storageStatePath ? { storageStatePath } : {}),
           ...(options.sensitiveValues ? { sensitiveValues: options.sensitiveValues } : {}),
         })
@@ -382,6 +385,7 @@ async function openSession(options: {
   plan: TestPlan
   runId: string
   captureEvidence: boolean
+  headless?: boolean | undefined
   evidence: FlowEvidenceNames
   storageStatePath?: string | undefined
   sensitiveValues?: readonly string[] | undefined
@@ -391,6 +395,7 @@ async function openSession(options: {
   return BrowserSession.open({
     startUrl,
     navigationPolicy: createNavigationPolicy(startUrl, '', options.plan.origins),
+    ...(options.headless !== undefined ? { headless: options.headless } : {}),
     ...(options.storageStatePath ? { storageStatePath: options.storageStatePath } : {}),
     ...(options.sensitiveValues ? { sensitiveValues: options.sensitiveValues } : {}),
     ...(options.captureEvidence
