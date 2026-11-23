@@ -1,9 +1,11 @@
 import { runSavedPlan } from './plans/run-saved-plan.js'
+import { listPlans } from './artifacts/store.js'
 
 const HELP = `Phloem-AI
 
 Usage:
   phloem-ai                         Start the MCP server
+  phloem-ai list                    List saved plan names
   phloem-ai run <plan-name|path>    Replay a saved test plan
 
 Run options:
@@ -35,6 +37,32 @@ export async function runCli(args = process.argv.slice(2)): Promise<number | nul
   if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
     process.stdout.write(HELP)
     return 0
+  }
+  if (args[0] === 'list') {
+    if (args.slice(1).includes('--help') || args.slice(1).includes('-h')) {
+      process.stdout.write('Usage: phloem-ai list [--json]\n')
+      return 0
+    }
+    const unknown = args.slice(1).find((arg) => arg !== '--json')
+    if (unknown) {
+      process.stderr.write(`Unknown list option "${unknown}". Use --json or no options.\n`)
+      return 2
+    }
+    try {
+      const plans = await listPlans()
+      if (args.includes('--json')) {
+        process.stdout.write(JSON.stringify(plans.map(({ name }) => name), null, 2) + '\n')
+      } else if (plans.length === 0) {
+        process.stdout.write('No saved plans found in the Phloem data directory.\n')
+      } else {
+        for (const { name } of plans) process.stdout.write(`${name}\n`)
+      }
+      return 0
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'An unexpected error occurred.'
+      process.stderr.write(`Could not list saved plans: ${message}\n`)
+      return 2
+    }
   }
   if (args[0] !== 'run') {
     process.stderr.write(`Unknown command "${args[0]}".\n\n${HELP}`)

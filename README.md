@@ -30,9 +30,10 @@ The CLI can replay a saved plan without an MCP host. It uses the same determinis
 npx -y phloem-ai run checkout-flow
 npx -y phloem-ai run checkout-flow --headed
 npx -y phloem-ai run checkout-flow --json
+npx -y phloem-ai list
 ```
 
-Use `phloem-ai --help` for all options. The default is headless Chromium, which is suitable for CI. `--headed` displays Chromium and requires a desktop session. Plan names and paths are resolved from the Phloem data directory; set `PHLOEM_DATA_DIR` to share version-controlled plans with a project or CI job. A plan path is relative to that directory. The application under test must already be running and reachable.
+Use `phloem-ai list` to print saved plan names, then pass one to `run`. Add `--json` to list for machine-readable output. The default is headless Chromium, which is suitable for CI. `--headed` displays Chromium and requires a desktop session. Plan names and paths are resolved from the Phloem data directory; set `PHLOEM_DATA_DIR` to share version-controlled plans with a project or CI job. A plan path is relative to that directory. The application under test must already be running and reachable.
 
 ## Tools
 
